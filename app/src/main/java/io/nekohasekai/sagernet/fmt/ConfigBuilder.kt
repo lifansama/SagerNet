@@ -19,27 +19,31 @@
 
 package io.nekohasekai.sagernet.fmt
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
-import cn.hutool.core.util.NumberUtil
+import android.provider.Settings
 import cn.hutool.json.JSONArray
 import cn.hutool.json.JSONObject
 import com.github.shadowsocks.plugin.PluginConfiguration
 import com.github.shadowsocks.plugin.PluginManager
 import com.google.gson.JsonSyntaxException
+import com.v2ray.core.common.net.packetaddr.PacketAddrType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
-import io.nekohasekai.sagernet.bg.ForegroundDetectorService
-import io.nekohasekai.sagernet.bg.VpnService
+import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.TunImplementation
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.fmt.V2rayBuildResult.IndexEntity
-import io.nekohasekai.sagernet.fmt.brook.BrookBean
 import io.nekohasekai.sagernet.fmt.gson.gson
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.internal.BalancerBean
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
+import io.nekohasekai.sagernet.fmt.shadowsocks.methodsSing
 import io.nekohasekai.sagernet.fmt.shadowsocksr.ShadowsocksRBean
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import io.nekohasekai.sagernet.fmt.ssh.SSHBean
@@ -51,11 +55,11 @@ import io.nekohasekai.sagernet.fmt.v2ray.V2RayConfig.RoutingObject.BalancerObjec
 import io.nekohasekai.sagernet.fmt.v2ray.VLESSBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
+import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.isIpAddress
-import io.nekohasekai.sagernet.ktx.isRunning
 import io.nekohasekai.sagernet.ktx.mkPort
 import io.nekohasekai.sagernet.utils.PackageCache
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import libcore.Libcore
 
 const val TAG_SOCKS = "socks"
 const val TAG_HTTP = "http"
@@ -153,21 +157,23 @@ fun buildV2RayConfig(
 
     val remoteDns = DataStore.remoteDns.split("\n")
         .mapNotNull { dns -> dns.trim().takeIf { it.isNotBlank() && !it.startsWith("#") } }
-    val directDNS = DataStore.directDns.split("\n")
+    var directDNS = DataStore.directDns.split("\n")
         .mapNotNull { dns -> dns.trim().takeIf { it.isNotBlank() && !it.startsWith("#") } }
+    if (DataStore.useLocalDnsAsDirectDns) directDNS = listOf("localhost")
     val enableDnsRouting = DataStore.enableDnsRouting
     val trafficSniffing = DataStore.trafficSniffing
     val indexMap = ArrayList<IndexEntity>()
     var requireWs = false
-    val requireHttp = !forTest && (Build.VERSION.SDK_INT <= Build.VERSION_CODES.M || DataStore.requireHttp)
+    val requireHttp = !forTest && DataStore.requireHttp
     val requireTransproxy = if (forTest) false else DataStore.requireTransproxy
     val ipv6Mode = if (forTest) IPv6Mode.ENABLE else DataStore.ipv6Mode
     val resolveDestination = DataStore.resolveDestination
     val destinationOverride = DataStore.destinationOverride
     val trafficStatistics = !forTest && DataStore.profileTrafficStatistics
+    val needIncludeSelf = DataStore.tunImplementation == TunImplementation.SYSTEM
 
     val outboundDomainStrategy = when {
-        !resolveDestination -> "AsIs"
+        destinationOverride && !resolveDestination -> "AsIs"
         ipv6Mode == IPv6Mode.DISABLE -> "UseIPv4"
         ipv6Mode == IPv6Mode.PREFER -> "PreferIPv6"
         ipv6Mode == IPv6Mode.ONLY -> "UseIPv6"
@@ -190,8 +196,16 @@ fun buildV2RayConfig(
             servers.addAll(remoteDns.map {
                 DnsObject.StringOrServerObject().apply {
                     valueY = DnsObject.ServerObject().apply {
-                        address = it
-                        concurrent = true
+                        var url = it
+                        if (it != "localhost") {
+                            val lnk = Libcore.parseURL(it)
+                            if (lnk.scheme.isBlank()) {
+                                lnk.scheme = "udp"
+                            }
+                            url = lnk.string
+                        }
+                        address = url
+                        concurrency = true
                     }
                 }
             })
@@ -281,7 +295,7 @@ fun buildV2RayConfig(
                 if (trafficSniffing) {
                     sniffing = InboundObject.SniffingObject().apply {
                         enabled = true
-                        destOverride =  listOf("http", "tls", "quic")
+                        destOverride = listOf("http", "tls", "quic")
                         routeOnly = !destinationOverride
                     }
                 }
@@ -330,19 +344,13 @@ fun buildV2RayConfig(
 
             rules.addAll(wsRules.values)
 
-            if (DataStore.bypassLan && (requireHttp || DataStore.bypassLanInCoreOnly)) {
+            if (!forTest && DataStore.bypassLan && (requireHttp || DataStore.bypassLanInCoreOnly)) {
                 rules.add(RoutingObject.RuleObject().apply {
                     type = "field"
                     outboundTag = TAG_BYPASS
                     ip = listOf("geoip:private")
                 })
             }
-        }
-
-        val needIncludeSelf = proxy.balancerBean == null && proxies.size > 1 || extraProxies.any { (key, value) ->
-            val (_, balancer) = key
-            val (isBalancer, _) = balancer
-            isBalancer && value.size > 1
         }
 
         var rootBalancer: RoutingObject.RuleObject? = null
@@ -368,7 +376,7 @@ fun buildV2RayConfig(
                 currentOutbound = OutboundObject()
 
                 val tagIn: String
-                val needGlobal: Boolean
+                var needGlobal: Boolean
 
                 if (isBalancer || index == profileList.lastIndex && !pastExternal) {
                     tagIn = "$TAG_AGENT-global-${proxyEntity.id}"
@@ -380,442 +388,555 @@ fun buildV2RayConfig(
                     needGlobal = false
                 }
 
-                if (index == profileList.lastIndex) {
+                if (index == 0) {
                     chainOutbound = tagIn
                 }
 
                 if (needGlobal) {
-                    if (globalOutbounds.contains(tagIn)) {
-                        return@forEachIndexed
-                    }
-                    globalOutbounds.add(tagIn)
-                }
-
-                outboundTagsAll[tagIn] = proxyEntity
-
-                if (isBalancer || index == 0) {
-                    outboundTags.add(tagIn)
-                    if (tagOutbound == TAG_AGENT) {
-                        outboundTagsCurrent.add(tagIn)
+                    if (!globalOutbounds.contains(tagIn)) {
+                        needGlobal = false
+                        globalOutbounds.add(tagIn)
                     }
                 }
 
-                if (proxyEntity.needExternal()) {
-                    val localPort = mkPort()
-                    chainMap[localPort] = proxyEntity
-                    currentOutbound.apply {
-                        protocol = "socks"
-                        settings = LazyOutboundConfigurationObject(this,
-                            SocksOutboundConfigurationObject().apply {
-                                servers = listOf(SocksOutboundConfigurationObject.ServerObject()
-                                    .apply {
-                                        address = LOCALHOST
-                                        port = localPort
-                                    })
-                            })
-                    }
-                } else {
-                    currentOutbound.apply {
-                        val keepAliveInterval = DataStore.tcpKeepAliveInterval
-                        val needKeepAliveInterval = keepAliveInterval !in intArrayOf(0, 15)
+                if (!needGlobal) {
 
-                        if (bean is SOCKSBean) {
+                    outboundTagsAll[tagIn] = proxyEntity
+
+                    if (isBalancer || index == 0) {
+                        outboundTags.add(tagIn)
+                        if (tagOutbound == TAG_AGENT) {
+                            outboundTagsCurrent.add(tagIn)
+                        }
+                    }
+
+                    var currentDomainStrategy = outboundDomainStrategy
+
+                    if (proxyEntity.needExternal()) {
+                        val localPort = mkPort()
+                        chainMap[localPort] = proxyEntity
+                        currentOutbound.apply {
                             protocol = "socks"
                             settings = LazyOutboundConfigurationObject(this,
                                 SocksOutboundConfigurationObject().apply {
                                     servers = listOf(SocksOutboundConfigurationObject.ServerObject()
                                         .apply {
-                                            address = bean.serverAddress
-                                            port = bean.serverPort
-                                            if (!bean.username.isNullOrBlank()) {
-                                                users = listOf(SocksOutboundConfigurationObject.ServerObject.UserObject()
-                                                    .apply {
-                                                        user = bean.username
-                                                        pass = bean.password
-                                                    })
-                                            }
-                                        })
-                                    version = bean.protocolVersionName()
-                                })
-                            if (bean.tls || needKeepAliveInterval) {
-                                streamSettings = StreamSettingsObject().apply {
-                                    network = "tcp"
-                                    if (bean.tls) {
-                                        security = "tls"
-                                        tlsSettings = TLSObject().apply {
-                                            if (bean.sni.isNotBlank()) {
-                                                serverName = bean.sni
-                                            }
-                                        }
-                                    }
-                                    if (needKeepAliveInterval) {
-                                        sockopt = StreamSettingsObject.SockoptObject().apply {
-                                            tcpKeepAliveInterval = keepAliveInterval
-                                        }
-                                    }
-                                }
-                            }
-                        } else if (bean is HttpBean) {
-                            protocol = "http"
-                            settings = LazyOutboundConfigurationObject(this,
-                                HTTPOutboundConfigurationObject().apply {
-                                    servers = listOf(HTTPOutboundConfigurationObject.ServerObject()
-                                        .apply {
-                                            address = bean.serverAddress
-                                            port = bean.serverPort
-                                            if (!bean.username.isNullOrBlank()) {
-                                                users = listOf(HTTPInboundConfigurationObject.AccountObject()
-                                                    .apply {
-                                                        user = bean.username
-                                                        pass = bean.password
-                                                    })
+                                            address = LOCALHOST
+                                            port = localPort
+                                            if (proxy.needUoT()) {
+                                                uot = true
                                             }
                                         })
                                 })
-                            if (bean.tls || needKeepAliveInterval) {
-                                streamSettings = StreamSettingsObject().apply {
-                                    network = "tcp"
-                                    if (bean.tls) {
-                                        security = "tls"
-                                        tlsSettings = TLSObject().apply {
-                                            if (bean.sni.isNotBlank()) {
-                                                serverName = bean.sni
-                                            }
-                                        }
-                                    }
-                                    if (needKeepAliveInterval) {
-                                        sockopt = StreamSettingsObject.SockoptObject().apply {
-                                            tcpKeepAliveInterval = keepAliveInterval
-                                        }
-                                    }
-                                }
-                            }
-                        } else if (bean is StandardV2RayBean) {
-                            if (bean is VMessBean) {
-                                protocol = "vmess"
+                        }
+                        if (currentDomainStrategy == "AsIs") {
+                            currentDomainStrategy = "UseIP"
+                        }
+                    } else {
+                        currentOutbound.apply {
+                            val keepAliveInterval = DataStore.tcpKeepAliveInterval
+                            val needKeepAliveInterval = keepAliveInterval !in intArrayOf(0, 15)
+
+                            if (bean is SOCKSBean) {
+                                protocol = "socks"
                                 settings = LazyOutboundConfigurationObject(this,
-                                    VMessOutboundConfigurationObject().apply {
-                                        vnext = listOf(VMessOutboundConfigurationObject.ServerObject()
+                                    SocksOutboundConfigurationObject().apply {
+                                        servers = listOf(SocksOutboundConfigurationObject.ServerObject()
                                             .apply {
                                                 address = bean.serverAddress
                                                 port = bean.serverPort
-                                                users = listOf(VMessOutboundConfigurationObject.ServerObject.UserObject()
-                                                    .apply {
-                                                        id = bean.uuidOrGenerate()
-                                                        alterId = bean.alterId
-                                                        security = bean.encryption.takeIf { it.isNotBlank() }
-                                                            ?: "auto"
-                                                        experimental = ""
-                                                        if (bean.experimentalAuthenticatedLength) {
-                                                            experimental += "AuthenticatedLength"
-                                                        }
-                                                        if (bean.experimentalNoTerminationSignal) {
-                                                            experimental += "NoTerminationSignal"
-                                                        }
-                                                        if (experimental.isBlank()) experimental = null;
-                                                    })
+                                                if (!bean.username.isNullOrBlank()) {
+                                                    users = listOf(SocksOutboundConfigurationObject.ServerObject.UserObject()
+                                                        .apply {
+                                                            user = bean.username
+                                                            pass = bean.password
+                                                        })
+                                                }
                                             })
+                                        version = bean.protocolVersionName()
                                     })
-                            } else if (bean is VLESSBean) {
-                                protocol = "vless"
-                                settings = LazyOutboundConfigurationObject(this,
-                                    VLESSOutboundConfigurationObject().apply {
-                                        vnext = listOf(VLESSOutboundConfigurationObject.ServerObject()
-                                            .apply {
-                                                address = bean.serverAddress
-                                                port = bean.serverPort
-                                                users = listOf(VLESSOutboundConfigurationObject.ServerObject.UserObject()
-                                                    .apply {
-                                                        id = bean.uuidOrGenerate()
-                                                        encryption = bean.encryption
-                                                    })
-                                            })
-                                    })
-                            }
-
-                            streamSettings = StreamSettingsObject().apply {
-                                network = bean.type
-                                if (bean.security.isNotBlank()) {
-                                    security = bean.security
-                                }
-                                if (security == "tls") {
-                                    tlsSettings = TLSObject().apply {
-                                        if (bean.sni.isNotBlank()) {
-                                            serverName = bean.sni
-                                        }
-
-                                        if (bean.alpn.isNotBlank()) {
-                                            alpn = bean.alpn.split("\n")
-                                        }
-
-                                        if (bean.certificates.isNotBlank()) {
-                                            disableSystemRoot = true
-                                            certificates = listOf(TLSObject.CertificateObject()
-                                                .apply {
-                                                    usage = "verify"
-                                                    certificate = bean.certificates.split(
-                                                        "\n"
-                                                    ).filter { it.isNotBlank() }
-                                                })
-                                        }
-
-                                        if (bean.pinnedPeerCertificateChainSha256.isNotBlank()) {
-                                            pinnedPeerCertificateChainSha256 = bean.pinnedPeerCertificateChainSha256.split(
-                                                "\n"
-                                            ).filter { it.isNotBlank() }
-                                        }
-
-                                        if (bean.allowInsecure) {
-                                            allowInsecure = true
-                                        }
-                                    }
-                                }
-
-                                when (network) {
-                                    "tcp" -> {
-                                        tcpSettings = TcpObject().apply {
-                                            if (bean.headerType == "http") {
-                                                header = TcpObject.HeaderObject().apply {
-                                                    type = "http"
-                                                    if (bean.host.isNotBlank() || bean.path.isNotBlank()) {
-                                                        request = TcpObject.HeaderObject.HTTPRequestObject()
-                                                            .apply {
-                                                                headers = mutableMapOf()
-                                                                if (bean.host.isNotBlank()) {
-                                                                    headers["Host"] = TcpObject.HeaderObject.StringOrListObject()
-                                                                        .apply {
-                                                                            valueY = bean.host.split(
-                                                                                ","
-                                                                            ).map { it.trim() }
-                                                                        }
-                                                                }
-                                                                if (bean.path.isNotBlank()) {
-                                                                    path = bean.path.split(",")
-                                                                }
-                                                            }
-                                                    }
+                                if (bean.tls || needKeepAliveInterval) {
+                                    streamSettings = StreamSettingsObject().apply {
+                                        network = "tcp"
+                                        if (bean.tls) {
+                                            security = "tls"
+                                            tlsSettings = TLSObject().apply {
+                                                if (bean.sni.isNotBlank()) {
+                                                    serverName = bean.sni
                                                 }
                                             }
                                         }
-                                    }
-                                    "kcp" -> {
-                                        kcpSettings = KcpObject().apply {
-                                            mtu = 1350
-                                            tti = 50
-                                            uplinkCapacity = 12
-                                            downlinkCapacity = 100
-                                            congestion = false
-                                            readBufferSize = 1
-                                            writeBufferSize = 1
-                                            header = KcpObject.HeaderObject().apply {
-                                                type = bean.headerType
-                                            }
-                                            if (bean.mKcpSeed.isNotBlank()) {
-                                                seed = bean.mKcpSeed
-                                            }
-                                        }
-                                    }
-                                    "ws" -> {
-                                        wsSettings = WebSocketObject().apply {
-                                            headers = mutableMapOf()
-
-                                            if (bean.host.isNotBlank()) {
-                                                headers["Host"] = bean.host
-                                            }
-
-                                            path = bean.path.takeIf { it.isNotBlank() } ?: "/"
-
-                                            if (bean.wsMaxEarlyData > 0) {
-                                                maxEarlyData = bean.wsMaxEarlyData
-                                            }
-
-                                            if (bean.earlyDataHeaderName.isNotBlank()) {
-                                                earlyDataHeaderName = bean.earlyDataHeaderName
-                                            }
-
-                                            if (bean.wsUseBrowserForwarder) {
-                                                useBrowserForwarding = true
-                                                requireWs = true
-                                            }
-                                        }
-                                    }
-                                    "http" -> {
-                                        network = "http"
-
-                                        httpSettings = HttpObject().apply {
-                                            if (bean.host.isNotBlank()) {
-                                                host = bean.host.split(",")
-                                            }
-
-                                            path = bean.path.takeIf { it.isNotBlank() } ?: "/"
-                                        }
-                                    }
-                                    "quic" -> {
-                                        quicSettings = QuicObject().apply {
-                                            security = bean.quicSecurity.takeIf { it.isNotBlank() }
-                                                ?: "none"
-                                            key = bean.quicKey
-                                            header = QuicObject.HeaderObject().apply {
-                                                type = bean.headerType.takeIf { it.isNotBlank() }
-                                                    ?: "none"
-                                            }
-                                        }
-                                    }
-                                    "grpc" -> {
-                                        grpcSettings = GrpcObject().apply {
-                                            serviceName = bean.grpcServiceName
-                                        }
-                                    }
-                                }
-
-                                if (needKeepAliveInterval) {
-                                    sockopt = StreamSettingsObject.SockoptObject().apply {
-                                        tcpKeepAliveInterval = keepAliveInterval
-                                    }
-                                }
-
-                            }
-                        } else if (bean is ShadowsocksBean || bean is ShadowsocksRBean) {
-                            protocol = "shadowsocks"
-                            settings = LazyOutboundConfigurationObject(this,
-                                ShadowsocksOutboundConfigurationObject().apply {
-                                    servers = listOf(ShadowsocksOutboundConfigurationObject.ServerObject()
-                                        .apply {
-                                            address = bean.serverAddress
-                                            port = bean.serverPort
-                                            when (bean) {
-                                                is ShadowsocksBean -> {
-                                                    method = bean.method
-                                                    password = bean.password
-                                                }
-                                                is ShadowsocksRBean -> {
-                                                    method = bean.method
-                                                    password = bean.password
-                                                }
-                                            }
-                                        })
-                                    if (needKeepAliveInterval) {
-                                        streamSettings = StreamSettingsObject().apply {
+                                        if (needKeepAliveInterval) {
                                             sockopt = StreamSettingsObject.SockoptObject().apply {
                                                 tcpKeepAliveInterval = keepAliveInterval
                                             }
                                         }
                                     }
-                                    if (bean is ShadowsocksRBean) {
-                                        plugin = "shadowsocksr"
-                                        pluginArgs = listOf(
-                                            "--obfs=${bean.obfs}",
-                                            "--obfs-param=${bean.obfsParam}",
-                                            "--protocol=${bean.protocol}",
-                                            "--protocol-param=${bean.protocolParam}"
-                                        )
-                                    } else if (bean is ShadowsocksBean && bean.plugin.isNotBlank()) {
-                                        val pluginConfiguration = PluginConfiguration(bean.plugin)
-                                        try {
-                                            PluginManager.init(pluginConfiguration)
-                                                ?.let { (path, opts, _) ->
-                                                    plugin = path
-                                                    pluginOpts = opts.toString()
+                                }
+                            } else if (bean is HttpBean) {
+                                protocol = "http"
+                                settings = LazyOutboundConfigurationObject(this,
+                                    HTTPOutboundConfigurationObject().apply {
+                                        servers = listOf(HTTPOutboundConfigurationObject.ServerObject()
+                                            .apply {
+                                                address = bean.serverAddress
+                                                port = bean.serverPort
+                                                if (!bean.username.isNullOrBlank()) {
+                                                    users = listOf(HTTPInboundConfigurationObject.AccountObject()
+                                                        .apply {
+                                                            user = bean.username
+                                                            pass = bean.password
+                                                        })
                                                 }
-                                        } catch (e: PluginManager.PluginNotFoundException) {
-                                            if (e.plugin in arrayOf("v2ray-plugin", "obfs-local")) {
-                                                plugin = e.plugin
-                                                pluginOpts = pluginConfiguration.getOptions()
-                                                    .toString()
-                                            } else {
-                                                throw e
+                                            })
+                                    })
+                                if (bean.tls || needKeepAliveInterval) {
+                                    streamSettings = StreamSettingsObject().apply {
+                                        network = "tcp"
+                                        if (bean.tls) {
+                                            security = "tls"
+                                            tlsSettings = TLSObject().apply {
+                                                if (bean.sni.isNotBlank()) {
+                                                    serverName = bean.sni
+                                                }
+                                            }
+                                        }
+                                        if (needKeepAliveInterval) {
+                                            sockopt = StreamSettingsObject.SockoptObject().apply {
+                                                tcpKeepAliveInterval = keepAliveInterval
                                             }
                                         }
                                     }
-                                })
-                        } else if (bean is TrojanBean) {
-                            protocol = "trojan"
-                            settings = LazyOutboundConfigurationObject(this,
-                                TrojanOutboundConfigurationObject().apply {
-                                    servers = listOf(TrojanOutboundConfigurationObject.ServerObject()
-                                        .apply {
-                                            address = bean.serverAddress
-                                            port = bean.serverPort
-                                            password = bean.password
+                                }
+                            } else if (bean is StandardV2RayBean) {
+                                if (bean is VMessBean) {
+                                    protocol = "vmess"
+                                    settings = LazyOutboundConfigurationObject(this,
+                                        VMessOutboundConfigurationObject().apply {
+                                            vnext = listOf(VMessOutboundConfigurationObject.ServerObject()
+                                                .apply {
+                                                    address = bean.serverAddress
+                                                    port = bean.serverPort
+                                                    users = listOf(VMessOutboundConfigurationObject.ServerObject.UserObject()
+                                                        .apply {
+                                                            id = bean.uuidOrGenerate()
+                                                            security = bean.encryption.takeIf { it.isNotBlank() }
+                                                                ?: "auto"
+                                                            experimental = ""
+                                                            if (bean.experimentalAuthenticatedLength) {
+                                                                experimental += "AuthenticatedLength"
+                                                            }
+                                                            if (bean.experimentalNoTerminationSignal) {
+                                                                experimental += "NoTerminationSignal"
+                                                            }
+                                                            if (experimental.isBlank()) experimental = null;
+                                                        })
+                                                })
+                                            when (bean.packetEncoding) {
+                                                PacketAddrType.Packet_VALUE -> {
+                                                    packetEncoding = "packet"
+                                                    if (currentDomainStrategy == "AsIs") {
+                                                        currentDomainStrategy = "UseIP"
+                                                    }
+                                                }
+                                                PacketAddrType.XUDP_VALUE -> packetEncoding = "xudp"
+                                            }
                                         })
-                                })
-                            streamSettings = StreamSettingsObject().apply {
-                                network = "tcp"
-                                security = "tls"
-                                tlsSettings = TLSObject().apply {
-                                    if (bean.sni.isNotBlank()) {
-                                        serverName = bean.sni
-                                    }
-                                    if (bean.alpn.isNotBlank()) {
-                                        alpn = bean.alpn.split("\n")
-                                    }
+                                } else if (bean is VLESSBean) {
+                                    protocol = "vless"
+                                    settings = LazyOutboundConfigurationObject(this,
+                                        VLESSOutboundConfigurationObject().apply {
+                                            vnext = listOf(VLESSOutboundConfigurationObject.ServerObject()
+                                                .apply {
+                                                    address = bean.serverAddress
+                                                    port = bean.serverPort
+                                                    users = listOf(VLESSOutboundConfigurationObject.ServerObject.UserObject()
+                                                        .apply {
+                                                            id = bean.uuidOrGenerate()
+                                                            encryption = bean.encryption
+                                                            if (bean.flow.isNotBlank()) {
+                                                                flow = bean.flow
+                                                            } else if (bean.security == "xtls") {
+                                                                flow = "xtls-rprx-direct"
+                                                            }
+                                                        })
+                                                })
+                                            when (bean.packetEncoding) {
+                                                PacketAddrType.Packet_VALUE -> {
+                                                    packetEncoding = "packet"
+                                                    if (currentDomainStrategy == "AsIs") {
+                                                        currentDomainStrategy = "UseIP"
+                                                    }
+                                                }
+                                                PacketAddrType.XUDP_VALUE -> packetEncoding = "xudp"
+                                            }
+                                        })
                                 }
-                                if (needKeepAliveInterval) {
-                                    sockopt = StreamSettingsObject.SockoptObject().apply {
-                                        tcpKeepAliveInterval = keepAliveInterval
+
+                                streamSettings = StreamSettingsObject().apply {
+                                    network = bean.type
+                                    if (bean.security.isNotBlank()) {
+                                        security = bean.security
                                     }
-                                }
-                                if (bean.allowInsecure) {
-                                    tlsSettings = tlsSettings ?: TLSObject()
-                                    tlsSettings.allowInsecure = true
-                                }
-                            }
-                        } else if (bean is WireGuardBean) {
-                            protocol = "wireguard"
-                            settings = LazyOutboundConfigurationObject(this,
-                                WireGuardOutbounzConfigurationObject().apply {
-                                    address = bean.finalAddress
-                                    port = bean.finalPort
-                                    network = "udp"
-                                    localAddresses = bean.localAddress.split("\n")
-                                    privateKey = bean.privateKey
-                                    peerPublicKey = bean.peerPublicKey
-                                    preSharedKey = bean.peerPreSharedKey
-                                })
-                            streamSettings = StreamSettingsObject().apply {
-                                if (needKeepAliveInterval) {
-                                    sockopt = StreamSettingsObject.SockoptObject().apply {
-                                        tcpKeepAliveInterval = keepAliveInterval
+                                    when (security) {
+                                        "xtls" -> {
+                                            xtlsSettings = TLSObject().apply {
+                                                if (bean.sni.isNotBlank()) {
+                                                    serverName = bean.sni
+                                                }
+                                                if (bean.alpn.isNotBlank()) {
+                                                    alpn = bean.alpn.split("\n")
+                                                }
+                                            }
+                                        }
+                                        "tls" -> {
+                                            tlsSettings = TLSObject().apply {
+                                                if (bean.sni.isNotBlank()) {
+                                                    serverName = bean.sni
+                                                }
+
+                                                if (bean.alpn.isNotBlank()) {
+                                                    alpn = bean.alpn.split("\n")
+                                                }
+
+                                                if (bean.certificates.isNotBlank()) {
+                                                    disableSystemRoot = true
+                                                    certificates = listOf(TLSObject.CertificateObject()
+                                                        .apply {
+                                                            usage = "verify"
+                                                            certificate = bean.certificates.split(
+                                                                "\n"
+                                                            ).filter { it.isNotBlank() }
+                                                        })
+                                                }
+
+                                                if (bean.pinnedPeerCertificateChainSha256.isNotBlank()) {
+                                                    pinnedPeerCertificateChainSha256 = bean.pinnedPeerCertificateChainSha256.split(
+                                                        "\n"
+                                                    ).filter { it.isNotBlank() }
+                                                }
+
+                                                if (bean.allowInsecure) {
+                                                    allowInsecure = true
+                                                }
+                                            }
+                                        }
                                     }
+
+                                    when (network) {
+                                        "tcp" -> {
+                                            tcpSettings = TcpObject().apply {
+                                                if (bean.headerType == "http") {
+                                                    header = TcpObject.HeaderObject().apply {
+                                                        type = "http"
+                                                        if (bean.host.isNotBlank() || bean.path.isNotBlank()) {
+                                                            request = TcpObject.HeaderObject.HTTPRequestObject()
+                                                                .apply {
+                                                                    headers = mutableMapOf()
+                                                                    if (bean.host.isNotBlank()) {
+                                                                        headers["Host"] = TcpObject.HeaderObject.StringOrListObject()
+                                                                            .apply {
+                                                                                valueY = bean.host.split(
+                                                                                    ","
+                                                                                ).map { it.trim() }
+                                                                            }
+                                                                    }
+                                                                    if (bean.path.isNotBlank()) {
+                                                                        path = bean.path.split(",")
+                                                                    }
+                                                                }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "kcp" -> {
+                                            kcpSettings = KcpObject().apply {
+                                                mtu = 1350
+                                                tti = 50
+                                                uplinkCapacity = 12
+                                                downlinkCapacity = 100
+                                                congestion = false
+                                                readBufferSize = 1
+                                                writeBufferSize = 1
+                                                header = KcpObject.HeaderObject().apply {
+                                                    type = bean.headerType
+                                                }
+                                                if (bean.mKcpSeed.isNotBlank()) {
+                                                    seed = bean.mKcpSeed
+                                                }
+                                            }
+                                        }
+                                        "ws" -> {
+                                            wsSettings = WebSocketObject().apply {
+                                                headers = mutableMapOf()
+
+                                                if (bean.host.isNotBlank()) {
+                                                    headers["Host"] = bean.host
+                                                }
+
+                                                path = bean.path.takeIf { it.isNotBlank() } ?: "/"
+
+                                                if (bean.wsMaxEarlyData > 0) {
+                                                    maxEarlyData = bean.wsMaxEarlyData
+                                                }
+
+                                                if (bean.earlyDataHeaderName.isNotBlank()) {
+                                                    earlyDataHeaderName = bean.earlyDataHeaderName
+                                                }
+
+                                                if (bean.wsUseBrowserForwarder) {
+                                                    useBrowserForwarding = true
+                                                    requireWs = true
+                                                }
+                                            }
+                                        }
+                                        "http" -> {
+                                            network = "http"
+
+                                            httpSettings = HttpObject().apply {
+                                                if (bean.host.isNotBlank()) {
+                                                    host = bean.host.split(",")
+                                                }
+
+                                                path = bean.path.takeIf { it.isNotBlank() } ?: "/"
+                                            }
+                                        }
+                                        "quic" -> {
+                                            quicSettings = QuicObject().apply {
+                                                security = bean.quicSecurity.takeIf { it.isNotBlank() }
+                                                    ?: "none"
+                                                key = bean.quicKey
+                                                header = QuicObject.HeaderObject().apply {
+                                                    type = bean.headerType.takeIf { it.isNotBlank() }
+                                                        ?: "none"
+                                                }
+                                            }
+                                        }
+                                        "grpc" -> {
+                                            grpcSettings = GrpcObject().apply {
+                                                serviceName = bean.grpcServiceName
+                                                if (bean.grpcMode.isNotBlank()) {
+                                                    mode = bean.grpcMode
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if (needKeepAliveInterval) {
+                                        sockopt = StreamSettingsObject.SockoptObject().apply {
+                                            tcpKeepAliveInterval = keepAliveInterval
+                                        }
+                                    }
+
                                 }
-                            }
-                        } else if (bean is SSHBean) {
-                            protocol = "ssh"
-                            settings = LazyOutboundConfigurationObject(this,
-                                SSHOutbountConfigurationObject().apply {
-                                    address = bean.finalAddress
-                                    port = bean.finalPort
-                                    user = bean.username
-                                    when (bean.authType) {
-                                        SSHBean.AUTH_TYPE_PRIVATE_KEY -> {
-                                            privateKey = bean.privateKey
-                                            password = bean.privateKeyPassphrase
+                            } else if (bean is ShadowsocksBean || bean is ShadowsocksRBean) {
+                                protocol = "shadowsocks"
+                                settings = LazyOutboundConfigurationObject(this,
+                                    ShadowsocksOutboundConfigurationObject().apply {
+                                        servers = listOf(ShadowsocksOutboundConfigurationObject.ServerObject()
+                                            .apply {
+                                                address = bean.serverAddress
+                                                port = bean.serverPort
+                                                when (bean) {
+                                                    is ShadowsocksBean -> {
+                                                        method = bean.method
+                                                        password = bean.password
+                                                        if (bean.uot) {
+                                                            uot = true
+                                                        }
+                                                        if (bean.experimentReducedIvHeadEntropy) {
+                                                            experimentReducedIvHeadEntropy = true
+                                                        }
+                                                        if (bean.encryptedProtocolExtension) {
+                                                            encryptedProtocolExtension = true
+                                                        }
+                                                    }
+                                                    is ShadowsocksRBean -> {
+                                                        method = bean.method
+                                                        password = bean.password
+                                                    }
+                                                }
+                                            })
+                                        if (needKeepAliveInterval) {
+                                            streamSettings = StreamSettingsObject().apply {
+                                                sockopt = StreamSettingsObject.SockoptObject()
+                                                    .apply {
+                                                        tcpKeepAliveInterval = keepAliveInterval
+                                                    }
+                                            }
+                                        }
+                                        if (bean is ShadowsocksRBean) {
+                                            plugin = "shadowsocksr"
+                                            pluginArgs = listOf(
+                                                "--obfs=${bean.obfs}",
+                                                "--obfs-param=${bean.obfsParam}",
+                                                "--protocol=${bean.protocol}",
+                                                "--protocol-param=${bean.protocolParam}"
+                                            )
+                                        } else if (bean is ShadowsocksBean && bean.plugin.isNotBlank()) {
+                                            val pluginConfiguration = PluginConfiguration(bean.plugin)
+                                            try {
+                                                PluginManager.init(pluginConfiguration)
+                                                    ?.let { (path, opts, _) ->
+                                                        plugin = path
+                                                        pluginOpts = opts.toString()
+                                                    }
+                                            } catch (e: PluginManager.PluginNotFoundException) {
+                                                if (e.plugin in arrayOf(
+                                                        "v2ray-plugin", "obfs-local"
+                                                    )
+                                                ) {
+                                                    plugin = e.plugin
+                                                    pluginOpts = pluginConfiguration.getOptions()
+                                                        .toString()
+                                                } else {
+                                                    throw e
+                                                }
+                                            }
+                                        }
+                                    })
+                            } else if (bean is TrojanBean && bean.security != "xtls") {
+                                protocol = "trojan_sing"
+                                settings = LazyOutboundConfigurationObject(this,
+                                    TrojanSingOutboundConfigurationObject().apply {
+                                        address = bean.serverAddress
+                                        port = bean.serverPort
+                                        password = bean.password
+                                        if (bean.sni.isNotBlank()) {
+                                            serverName = bean.sni
+                                        }
+                                        if (bean.alpn.isNotBlank()) {
+                                            nextProtos = bean.alpn.split("\n")
+                                        }
+                                        if (bean.allowInsecure) {
+                                            insecure = true
+                                        }
+                                    })
+                            } else if (bean is TrojanBean) {
+                                protocol = "trojan"
+                                settings = LazyOutboundConfigurationObject(this,
+                                    TrojanOutboundConfigurationObject().apply {
+                                        servers = listOf(TrojanOutboundConfigurationObject.ServerObject()
+                                            .apply {
+                                                address = bean.serverAddress
+                                                port = bean.serverPort
+                                                password = bean.password
+                                                if (bean.flow.isNotBlank()) {
+                                                    flow = bean.flow
+                                                } else if (bean.security == "xtls") {
+                                                    flow = "xtls-rprx-direct"
+                                                }
+                                            })
+                                    })
+                                streamSettings = StreamSettingsObject().apply {
+                                    network = "tcp"
+                                    when (bean.security) {
+                                        "xtls" -> {
+                                            security = bean.security
+                                            xtlsSettings = TLSObject().apply {
+                                                if (bean.sni.isNotBlank()) {
+                                                    serverName = bean.sni
+                                                }
+                                                if (bean.alpn.isNotBlank()) {
+                                                    alpn = bean.alpn.split("\n")
+                                                }
+                                            }
                                         }
                                         else -> {
-                                            password = bean.password
+                                            security = "tls"
+                                            tlsSettings = TLSObject().apply {
+                                                if (bean.sni.isNotBlank()) {
+                                                    serverName = bean.sni
+                                                }
+                                                if (bean.alpn.isNotBlank()) {
+                                                    alpn = bean.alpn.split("\n")
+                                                }
+                                            }
+                                            if (bean.allowInsecure) {
+                                                tlsSettings = tlsSettings ?: TLSObject()
+                                                tlsSettings.allowInsecure = true
+                                            }
                                         }
                                     }
-                                    publicKey = bean.publicKey
-                                })
-                            streamSettings = StreamSettingsObject().apply {
-                                if (needKeepAliveInterval) {
-                                    sockopt = StreamSettingsObject.SockoptObject().apply {
-                                        tcpKeepAliveInterval = keepAliveInterval
+                                    if (needKeepAliveInterval) {
+                                        sockopt = StreamSettingsObject.SockoptObject().apply {
+                                            tcpKeepAliveInterval = keepAliveInterval
+                                        }
+                                    }
+                                }
+                            } else if (bean is WireGuardBean) {
+                                protocol = "wireguard"
+                                settings = LazyOutboundConfigurationObject(this,
+                                    WireGuardOutbounzConfigurationObject().apply {
+                                        address = bean.finalAddress
+                                        port = bean.finalPort
+                                        network = "udp"
+                                        localAddresses = bean.localAddress.split("\n")
+                                        privateKey = bean.privateKey
+                                        peerPublicKey = bean.peerPublicKey
+                                        preSharedKey = bean.peerPreSharedKey
+                                        mtu = bean.mtu
+                                    })
+                                streamSettings = StreamSettingsObject().apply {
+                                    if (needKeepAliveInterval) {
+                                        sockopt = StreamSettingsObject.SockoptObject().apply {
+                                            tcpKeepAliveInterval = keepAliveInterval
+                                        }
+                                    }
+                                }
+                                if (currentDomainStrategy == "AsIs") {
+                                    currentDomainStrategy = "UseIP"
+                                }
+                            } else if (bean is SSHBean) {
+                                protocol = "ssh"
+                                settings = LazyOutboundConfigurationObject(this,
+                                    SSHOutbountConfigurationObject().apply {
+                                        address = bean.finalAddress
+                                        port = bean.finalPort
+                                        user = bean.username
+                                        when (bean.authType) {
+                                            SSHBean.AUTH_TYPE_PRIVATE_KEY -> {
+                                                privateKey = bean.privateKey
+                                                password = bean.privateKeyPassphrase
+                                            }
+                                            else -> {
+                                                password = bean.password
+                                            }
+                                        }
+                                        publicKey = bean.publicKey
+                                    })
+                                streamSettings = StreamSettingsObject().apply {
+                                    if (needKeepAliveInterval) {
+                                        sockopt = StreamSettingsObject.SockoptObject().apply {
+                                            tcpKeepAliveInterval = keepAliveInterval
+                                        }
                                     }
                                 }
                             }
-                        }
-                        if ((isBalancer || index == 0) && proxyEntity.needCoreMux() && DataStore.enableMux) {
-                            mux = OutboundObject.MuxObject().apply {
-                                enabled = true
-                                concurrency = DataStore.muxConcurrency
+                            if ((isBalancer || index == 0) && proxyEntity.needCoreMux() && DataStore.enableMux) {
+                                mux = OutboundObject.MuxObject().apply {
+                                    enabled = true
+                                    concurrency = DataStore.muxConcurrency
+                                    if (bean is StandardV2RayBean) {
+                                        when (bean.packetEncoding) {
+                                            PacketAddrType.Packet_VALUE -> {
+                                                packetEncoding = "packet"
+                                            }
+                                            PacketAddrType.XUDP_VALUE -> {
+                                                packetEncoding = "xudp"
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
 
-                currentOutbound.tag = tagIn
-                currentOutbound.domainStrategy = outboundDomainStrategy
+                    currentOutbound.tag = tagIn
+                    currentOutbound.domainStrategy = currentDomainStrategy
+
+                }
 
                 if (!isBalancer && index > 0) {
                     if (!pastExternal) {
@@ -828,20 +949,16 @@ fun buildV2RayConfig(
                             type = "field"
                             inboundTag = listOf(pastInboundTag)
                             outboundTag = tagIn
+                            if (currentOutbound.domainStrategy == "AsIs") {
+                                currentOutbound.domainStrategy = "UseIP"
+                            }
                         })
                     }
                 }
 
                 if (proxyEntity.needExternal() && !isBalancer && index != profileList.lastIndex) {
                     val mappingPort = mkPort()
-                    when (bean) {
-                        is BrookBean -> {
-                            dns.hosts[bean.serverAddress] = LOCALHOST
-                        }
-                        else -> {
-                            bean.finalAddress = LOCALHOST
-                        }
-                    }
+                    bean.finalAddress = LOCALHOST
                     bean.finalPort = mappingPort
                     bean.isChain = true
 
@@ -859,16 +976,9 @@ fun buildV2RayConfig(
 
                         pastInboundTag = tag
                     })
-                } else if (bean.canMapping() && proxyEntity.needExternal() && needIncludeSelf) {
+                } else if (bean.canMapping() && proxyEntity.needExternal()) {
                     val mappingPort = mkPort()
-                    when (bean) {
-                        is BrookBean -> {
-                            dns.hosts[bean.serverAddress] = LOCALHOST
-                        }
-                        else -> {
-                            bean.finalAddress = LOCALHOST
-                        }
-                    }
+                    bean.finalAddress = LOCALHOST
                     bean.finalPort = mappingPort
 
                     inbounds.add(InboundObject().apply {
@@ -891,19 +1001,19 @@ fun buildV2RayConfig(
 
                 }
 
-                outbounds.add(currentOutbound)
-                chainOutbounds.add(currentOutbound)
-                pastExternal = proxyEntity.needExternal()
-                pastOutbound = currentOutbound
+                if (!needGlobal) {
+                    outbounds.add(currentOutbound)
+                    chainOutbounds.add(currentOutbound)
+                    pastExternal = proxyEntity.needExternal()
+                    pastOutbound = currentOutbound
+                }
 
             }
 
             if (isBalancer) {
                 val balancerBean = balancer()!!
                 val observatory = ObservatoryObject().apply {
-                    probeUrl = if (balancerBean.probeUrl.isNotBlank()) {
-                        balancerBean.probeUrl
-                    } else {
+                    probeUrl = balancerBean.probeUrl.ifBlank {
                         DataStore.connectionTestURL
                     }
                     if (balancerBean.probeInterval > 0) {
@@ -985,19 +1095,15 @@ fun buildV2RayConfig(
             }
         }
 
-        val notVpn = DataStore.serviceMode != Key.MODE_VPN
-        val foregroundDetectorServiceStarted = ForegroundDetectorService::class.isRunning()
+        val isVpn = DataStore.serviceMode == Key.MODE_VPN
 
         for (rule in extraRules) {
-            if (rule.packages.isNotEmpty() || rule.appStatus.isNotEmpty()) {
+            if (rule.packages.isNotEmpty()) {
                 dumpUid = true
-                if (notVpn) {
-                    alerts.add(0 to rule.displayName())
+                if (!isVpn) {
+                    alerts.add(Alerts.ROUTE_ALERT_NOT_VPN to rule.displayName())
                     continue
                 }
-            }
-            if (rule.appStatus.isNotEmpty() && !foregroundDetectorServiceStarted) {
-                alerts.add(1 to rule.displayName())
             }
             routing.rules.add(RoutingObject.RuleObject().apply {
                 type = "field"
@@ -1007,8 +1113,30 @@ fun buildV2RayConfig(
                         PackageCache[it]?.takeIf { uid -> uid >= 10000 } ?: 1000
                     }.toHashSet().toList()
                 }
-                if (rule.appStatus.isNotEmpty()) {
-                    appStatus = rule.appStatus
+
+                if (rule.ssid.isNotBlank() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (app.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                        throw Alerts.RouteAlertException(
+                            Alerts.ROUTE_ALERT_NEED_BACKGROUND_LOCATION_ACCESS, rule.displayName()
+                        )
+                    }
+                    val isLocationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        SagerNet.location.isLocationEnabled
+                    } else {
+                        try {
+                            Settings.Secure.getInt(
+                                app.contentResolver, Settings.Secure.LOCATION_MODE
+                            ) != Settings.Secure.LOCATION_MODE_OFF
+                        } catch (e: Settings.SettingNotFoundException) {
+                            e.printStackTrace()
+                            false
+                        }
+                    }
+                    if (!isLocationEnabled) {
+                        throw Alerts.RouteAlertException(
+                            Alerts.ROUTE_ALERT_LOCATION_DISABLED, rule.displayName()
+                        )
+                    }
                 }
 
                 if (rule.domains.isNotBlank()) {
@@ -1034,6 +1162,12 @@ fun buildV2RayConfig(
                 }
                 if (rule.attrs.isNotBlank()) {
                     attrs = rule.attrs
+                }
+                if (rule.ssid.isNotBlank()) {
+                    ssidList = rule.ssid.split("\n")
+                }
+                if (rule.networkType.isNotBlank()) {
+                    networkType = rule.networkType
                 }
                 when {
                     rule.reverse -> inboundTag = listOf("reverse-${rule.id}")
@@ -1105,64 +1239,39 @@ fun buildV2RayConfig(
                 protocol = "dokodemo-door"
                 settings = LazyInboundConfigurationObject(this,
                     DokodemoDoorInboundConfigurationObject().apply {
-                        address = if (!remoteDns.first().isIpAddress()) {
-                            "1.0.0.1"
-                        } else {
-                            remoteDns.first()
-                        }
+                        address = "1.0.0.1"
                         network = "tcp,udp"
                         port = 53
                     })
 
             })
+        }
 
-            outbounds.add(OutboundObject().apply {
-                protocol = "dns"
-                tag = TAG_DNS_OUT
-                settings = LazyOutboundConfigurationObject(this,
-                    DNSOutboundConfigurationObject().apply {
-                        userLevel = 1
-                        var dns = remoteDns.first()
-                        if (dns.contains(":")) {
-                            val lPort = dns.substringAfterLast(":")
-                            dns = dns.substringBeforeLast(":")
-                            if (NumberUtil.isInteger(lPort)) {
-                                port = lPort.toInt()
-                            }
-                        }
-                        if (dns.isIpAddress()) {
-                            address = dns
-                        } else if (dns.contains("://")) {
+        outbounds.add(OutboundObject().apply {
+            protocol = "dns"
+            tag = TAG_DNS_OUT
+            settings = LazyOutboundConfigurationObject(this,
+                DNSOutboundConfigurationObject().apply {
+                    userLevel = 1
+                    var dns = remoteDns.first()
+                    if (!dns.contains("://")) dns = "udp://$dns"
+                    val uri = Uri.parse(dns)
+                    address = uri.host
+                    if (uri.port > 0) {
+                        port = uri.port
+                    }
+                    uri.scheme?.also {
+                        if (it.startsWith("tcp") || it.startsWith("https")) {
                             network = "tcp"
-                            address = dns.substringAfter("://")
                         }
-                    })
-            })
-        }
-
-        for (dns in remoteDns) {
-            if (!dns.isIpAddress()) continue
-            routing.rules.add(0, RoutingObject.RuleObject().apply {
-                type = "field"
-                outboundTag = tagProxy
-                ip = listOf(dns)
-            })
-        }
-
-        for (dns in directDNS) {
-            if (!dns.isIpAddress()) continue
-
-            routing.rules.add(0, RoutingObject.RuleObject().apply {
-                type = "field"
-                outboundTag = TAG_DIRECT
-                ip = listOf(dns)
-            })
-        }
+                    }
+                })
+        })
 
         val bypassIP = HashSet<String>()
         val bypassDomain = HashSet<String>()
 
-        (proxies + extraProxies.values.flatten()).filter { !it.requireBean().isChain }.forEach {
+        (proxies + extraProxies.values.flatten()).forEach {
             it.requireBean().apply {
                 if (!serverAddress.isIpAddress()) {
                     bypassDomain.add("full:$serverAddress")
@@ -1188,15 +1297,9 @@ fun buildV2RayConfig(
             }
         }
 
-        remoteDns.forEach {
-            var address = it
-            if (address.contains("://")) {
-                address = address.substringAfter("://")
-            }
-            "https://$address".toHttpUrlOrNull()?.apply {
-                if (!host.isIpAddress()) {
-                    bypassDomain.add("full:$host")
-                }
+        remoteDns.forEach { dns ->
+            Uri.parse(dns).host?.takeIf { !it.isIpAddress() }?.also {
+                bypassDomain.add("full:$it")
             }
         }
 
@@ -1204,21 +1307,38 @@ fun buildV2RayConfig(
             dns.servers.addAll(directDNS.map {
                 DnsObject.StringOrServerObject().apply {
                     valueY = DnsObject.ServerObject().apply {
-                        address = it
+                        var url = it
+                        if (it != "localhost") {
+                            val lnk = Libcore.parseURL(it)
+                            if (lnk.scheme.isBlank()) {
+                                lnk.scheme = "udp+local"
+                            } else {
+                                lnk.scheme = when (lnk.scheme) {
+                                    "tls" -> "tls+local"
+                                    "https" -> "https+local"
+                                    "quic" -> "quic+local"
+                                    "udp" -> "udp+local"
+                                    else -> lnk.scheme
+                                }
+                            }
+                            url = lnk.string
+                        }
+                        address = url
                         domains = bypassDomain.toList()
                         skipFallback = true
-                        concurrent = true
+                        concurrency = true
                     }
                 }
             })
         }
 
+        routing.rules.add(0, RoutingObject.RuleObject().apply {
+            type = "field"
+            protocol = listOf("dns")
+            outboundTag = TAG_DNS_OUT
+        })
+
         if (!forTest) {
-            routing.rules.add(0, RoutingObject.RuleObject().apply {
-                type = "field"
-                protocol = listOf("dns.strict")
-                outboundTag = TAG_DNS_OUT
-            })
             routing.rules.add(0, RoutingObject.RuleObject().apply {
                 type = "field"
                 inboundTag = listOf(TAG_DNS_IN)
@@ -1238,6 +1358,11 @@ fun buildV2RayConfig(
         if (rootBalancer != null) routing.rules.add(rootBalancer)
 
         if (trafficStatistics) stats = emptyMap()
+
+        if (!forTest) ping = PingObject().apply {
+            protocol = "unprivileged"
+            disableIPv6 = DataStore.ipv6Mode == IPv6Mode.DISABLE
+        }
 
         result = V2rayBuildResult(
             gson.toJson(this),

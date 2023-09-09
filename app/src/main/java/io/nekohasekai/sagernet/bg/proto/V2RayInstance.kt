@@ -26,6 +26,8 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import go.Seq
+import io.nekohasekai.sagernet.RootCAProvider
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.TrojanProvider
 import io.nekohasekai.sagernet.bg.AbstractInstance
@@ -41,6 +43,8 @@ import io.nekohasekai.sagernet.fmt.buildV2RayConfig
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.hysteria.buildHysteriaConfig
 import io.nekohasekai.sagernet.fmt.internal.ConfigBean
+import io.nekohasekai.sagernet.fmt.mieru.MieruBean
+import io.nekohasekai.sagernet.fmt.mieru.buildMieruConfig
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
 import io.nekohasekai.sagernet.fmt.naive.buildNaiveConfig
 import io.nekohasekai.sagernet.fmt.pingtunnel.PingTunnelBean
@@ -52,17 +56,20 @@ import io.nekohasekai.sagernet.fmt.trojan.buildTrojanGoConfig
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
 import io.nekohasekai.sagernet.fmt.trojan_go.buildCustomTrojanConfig
 import io.nekohasekai.sagernet.fmt.trojan_go.buildTrojanGoConfig
+import io.nekohasekai.sagernet.fmt.tuic.TuicBean
+import io.nekohasekai.sagernet.fmt.tuic.buildTuicConfig
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.plugin.PluginManager
 import kotlinx.coroutines.*
+import libcore.ErrorHandler
 import libcore.V2RayInstance
-import okhttp3.internal.closeQuietly
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 abstract class V2RayInstance(
     val profile: ProxyEntity
-) : AbstractInstance {
+) : AbstractInstance,
+    ErrorHandler {
 
     lateinit var config: V2rayBuildResult
     lateinit var v2rayPoint: V2RayInstance
@@ -93,37 +100,28 @@ abstract class V2RayInstance(
     open fun init() {
         v2rayPoint = V2RayInstance()
         buildConfig()
+        val enableMux = DataStore.enableMux
         for ((isBalancer, chain) in config.index) {
             chain.entries.forEachIndexed { index, (port, profile) ->
                 val needChain = !isBalancer && index != chain.size - 1
-                val mux = DataStore.enableMux && (isBalancer || chain.size == 0)
+                val needMux = enableMux && (isBalancer || index == chain.size - 1)
 
                 when (val bean = profile.requireBean()) {
                     is TrojanBean -> {
-                        when (DataStore.providerTrojan) {
-                            TrojanProvider.TROJAN -> {
-                                initPlugin("trojan-plugin")
-                                pluginConfigs[port] = profile.type to bean.buildTrojanConfig(
-                                    port
-                                )
-                            }
-                            TrojanProvider.TROJAN_GO -> {
-                                initPlugin("trojan-go-plugin")
-                                pluginConfigs[port] = profile.type to bean.buildTrojanGoConfig(
-                                    port, mux
-                                )
-                            }
-                        }
+                        initPlugin("trojan-go-plugin")
+                        pluginConfigs[port] = profile.type to bean.buildTrojanGoConfig(
+                            port, needMux
+                        )
                     }
                     is TrojanGoBean -> {
                         initPlugin("trojan-go-plugin")
                         pluginConfigs[port] = profile.type to bean.buildTrojanGoConfig(
-                            port, mux
+                            port, needMux
                         )
                     }
                     is NaiveBean -> {
                         initPlugin("naive-plugin")
-                        pluginConfigs[port] = profile.type to bean.buildNaiveConfig(port, mux)
+                        pluginConfigs[port] = profile.type to bean.buildNaiveConfig(port)
                     }
                     is PingTunnelBean -> {
                         if (needChain) error("PingTunnel is incompatible with chain")
@@ -148,6 +146,22 @@ abstract class V2RayInstance(
                             }
                         }
                     }
+                    is MieruBean -> {
+                        initPlugin("mieru-plugin")
+                        pluginConfigs[port] = profile.type to bean.buildMieruConfig(port)
+                    }
+                    is TuicBean -> {
+                        initPlugin("tuic-plugin")
+                        pluginConfigs[port] = profile.type to bean.buildTuicConfig(port) {
+                            File(
+                                app.noBackupFilesDir,
+                                "tuic_" + SystemClock.elapsedRealtime() + ".ca"
+                            ).apply {
+                                parentFile?.mkdirs()
+                                cacheFiles.add(this)
+                            }
+                        }
+                    }
                     is ConfigBean -> {
                         when (bean.type) {
                             "trojan-go" -> {
@@ -158,7 +172,7 @@ abstract class V2RayInstance(
                             }
                             else -> {
                                 externalInstances[port] = ExternalInstance(
-                                    profile, port
+                                    profile, port, this
                                 ).apply {
                                     init()
                                 }
@@ -174,12 +188,20 @@ abstract class V2RayInstance(
     @SuppressLint("SetJavaScriptEnabled")
     override fun launch() {
         val context = if (Build.VERSION.SDK_INT < 24 || SagerNet.user.isUserUnlocked) SagerNet.application else SagerNet.deviceStorage
+        val useSystemCACerts = DataStore.providerRootCA == RootCAProvider.SYSTEM
+        val rootCaPem by lazy { File(app.filesDir, "mozilla_included.pem").canonicalPath }
 
         for ((isBalancer, chain) in config.index) {
             chain.entries.forEachIndexed { index, (port, profile) ->
                 val bean = profile.requireBean()
                 val needChain = !isBalancer && index != chain.size - 1
                 val (profileType, config) = pluginConfigs[port] ?: 0 to ""
+                val env = mutableMapOf<String, String>()
+                if (!useSystemCACerts) {
+                    env["SSL_CERT_FILE"] = rootCaPem
+                    // disable system directories
+                    env["SSL_CERT_DIR"] = "/not_exists"
+                }
 
                 when {
                     externalInstances.containsKey(port) -> {
@@ -196,13 +218,10 @@ abstract class V2RayInstance(
                         cacheFiles.add(configFile)
 
                         val commands = listOf(
-                            when (DataStore.providerTrojan) {
-                                TrojanProvider.TROJAN -> initPlugin("trojan-plugin")
-                                else -> initPlugin("trojan-go-plugin")
-                            }.path, "--config", configFile.absolutePath
+                            initPlugin("trojan-go-plugin").path, "--config", configFile.absolutePath
                         )
 
-                        processes.start(commands)
+                        processes.start(commands, env)
                     }
                     bean is TrojanGoBean || bean is ConfigBean && bean.type == "trojan-go" -> {
                         val configFile = File(
@@ -217,7 +236,7 @@ abstract class V2RayInstance(
                             initPlugin("trojan-go-plugin").path, "-config", configFile.absolutePath
                         )
 
-                        processes.start(commands)
+                        processes.start(commands, env)
                     }
                     bean is NaiveBean -> {
                         val configFile = File(
@@ -233,7 +252,7 @@ abstract class V2RayInstance(
                             initPlugin("naive-plugin").path, configFile.absolutePath
                         )
 
-                        processes.start(commands)
+                        processes.start(commands, env)
                     }
                     bean is PingTunnelBean -> {
                         if (needChain) error("PingTunnel is incompatible with chain")
@@ -257,7 +276,7 @@ abstract class V2RayInstance(
                             commands.add(bean.key)
                         }
 
-                        processes.start(commands)
+                        processes.start(commands, env)
                     }
                     bean is RelayBatonBean -> {
                         val configFile = File(
@@ -276,7 +295,7 @@ abstract class V2RayInstance(
                             configFile.absolutePath
                         )
 
-                        processes.start(commands)
+                        processes.start(commands, env)
                     }
                     bean is BrookBean -> {
                         val commands = mutableListOf(initPlugin("brook-plugin").path)
@@ -298,6 +317,21 @@ abstract class V2RayInstance(
 
                         commands.add(bean.internalUri())
 
+                        if (bean.protocol.startsWith("ws")) {
+                            commands.add("--serverAddress")
+                            commands.add(bean.wrapUri())
+                        }
+
+                        if (bean.withoutBrookProtocol) {
+                            commands.add("--withoutBrookProtocol")
+                        }
+                        if (bean.insecure) {
+                            commands.add("--insecure")
+                        }
+                        if (bean.uot) {
+                            commands.add("--udpovertcp")
+                        }
+
                         if (bean.password.isNotBlank()) {
                             commands.add("--password")
                             commands.add(bean.password)
@@ -306,7 +340,7 @@ abstract class V2RayInstance(
                         commands.add("--socks5")
                         commands.add("$LOCALHOST:$port")
 
-                        processes.start(commands)
+                        processes.start(commands, env)
                     }
                     bean is HysteriaBean -> {
                         val configFile = File(
@@ -328,13 +362,55 @@ abstract class V2RayInstance(
                             "client"
                         )
 
-                        processes.start(commands)
+                        if (bean.protocol == HysteriaBean.PROTOCOL_FAKETCP) {
+                            commands.addAll(0, listOf("su", "-c"))
+                        }
+
+                        processes.start(commands, env)
+                    }
+                    bean is MieruBean -> {
+                        val configFile = File(
+                            context.noBackupFilesDir,
+                            "mieru_" + SystemClock.elapsedRealtime() + ".json"
+                        )
+
+                        configFile.parentFile?.mkdirs()
+                        configFile.writeText(config)
+                        cacheFiles.add(configFile)
+
+                        val plugin = initPlugin("mieru-plugin")
+
+                        env["MIERU_CONFIG_JSON_FILE"] = configFile.absolutePath
+
+                        val commands = mutableListOf(
+                            initPlugin("mieru-plugin").path, "run"
+                        )
+
+                        processes.start(commands, env)
+                    }
+                    bean is TuicBean -> {
+                        val configFile = File(
+                            context.noBackupFilesDir,
+                            "tuic_" + SystemClock.elapsedRealtime() + ".json"
+                        )
+
+                        configFile.parentFile?.mkdirs()
+                        configFile.writeText(config)
+                        cacheFiles.add(configFile)
+
+                        val commands = mutableListOf(
+                            initPlugin("tuic-plugin").path,
+                            "-c",
+                            configFile.absolutePath,
+                        )
+
+                        processes.start(commands, env)
                     }
                 }
             }
         }
 
-        v2rayPoint.start()
+        v2rayPoint.start(this)
 
         if (config.requireWs) {
             val url = "http://$LOCALHOST:" + (config.wsPort) + "/"
@@ -371,10 +447,16 @@ abstract class V2RayInstance(
 
     }
 
+    private var isClosed = false
+
     @Suppress("EXPERIMENTAL_API_USAGE")
     override fun close() {
+        if (isClosed) return
+
         for (instance in externalInstances.values) {
-            instance.closeQuietly()
+            runCatching {
+                instance.close()
+            }
         }
 
         cacheFiles.removeAll { it.delete(); true }
@@ -393,6 +475,10 @@ abstract class V2RayInstance(
         if (::v2rayPoint.isInitialized) {
             v2rayPoint.close()
         }
+
+        Seq.destroyRef(v2rayPoint.refnum)
+
+        isClosed = true
     }
 
 }

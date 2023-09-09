@@ -33,15 +33,32 @@ abstract class ThemedActivity : AppCompatActivity {
     constructor() : super()
     constructor(contentLayoutId: Int) : super(contentLayoutId)
 
+    enum class Type {
+        Default,
+        Dialog,
+        Translucent
+    }
+
+    open val type = Type.Default
+
     var themeResId = 0
     var uiMode = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        Theme.apply(this)
+        when (type) {
+            Type.Default -> {
+                Theme.apply(this)
+            }
+            Type.Dialog -> {
+                Theme.applyDialog(this)
+            }
+            Type.Translucent -> {
+                Theme.applyTranslucent(this)
+            }
+        }
         Theme.applyNightTheme()
 
         super.onCreate(savedInstanceState)
-
         uiMode = resources.configuration.uiMode
     }
 
@@ -71,6 +88,7 @@ abstract class ThemedActivity : AppCompatActivity {
             maxLines = 10
         }
     }
+
     internal open fun snackbarInternal(text: CharSequence): Snackbar = throw NotImplementedError()
 
 }

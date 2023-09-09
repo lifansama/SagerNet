@@ -75,11 +75,9 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
         val requestIgnoreBatteryOptimizations = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) { (resultCode, _) ->
-            if (resultCode == Activity.RESULT_OK) {
-                parentFragmentManager.beginTransaction()
-                    .replace(R.id.about_fragment_holder, AboutContent())
-                    .commitAllowingStateLoss()
-            }
+            parentFragmentManager.beginTransaction()
+                .replace(R.id.about_fragment_holder, AboutContent())
+                .commitAllowingStateLoss()
         }
 
         override fun getMaterialAboutList(activityContext: Context): MaterialAboutList {
@@ -104,9 +102,13 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
                         .build())
                     .addItem(MaterialAboutActionItem.Builder()
                         .icon(R.drawable.ic_baseline_airplanemode_active_24)
-                        .text(getString(R.string.version_x, "v2ray-core"))
+                        .text(getString(R.string.version_x, "SagerNet/v2ray-core"))
                         .subText("v" + Libcore.getV2RayVersion())
-                        .setOnClickAction { }
+                        .setOnClickAction {
+                            requireContext().launchCustomTab(
+                                "https://github.com/SagerNet/v2ray-core/releases"
+                            )
+                        }
                         .build())
                     .apply {
                         val m = enumValues<PluginEntry>().associateBy { it.pluginId }
@@ -192,13 +194,6 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
                             requireContext().launchCustomTab(
                                 "https://t.me/SagerNet"
                             )
-                        }
-                        .build())
-                    .addItem(MaterialAboutActionItem.Builder()
-                        .icon(R.drawable.ic_action_copyright)
-                        .text(R.string.oss_licenses)
-                        .setOnClickAction {
-                            startActivity(Intent(context, LicenseActivity::class.java))
                         }
                         .build())
                     .build())

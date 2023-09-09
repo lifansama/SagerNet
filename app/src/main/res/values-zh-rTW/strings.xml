@@ -4,7 +4,6 @@
     <string name="project">專案</string>
     <string name="github">原始碼</string>
     <string name="telegram">Telegram 更新頻道</string>
-    <string name="oss_licenses">開放原始碼授權協定</string>
     <string name="app_version">版本</string>
     <string name="logcat">匯出 debug 所需資訊</string>
     <string name="logcat_summary">這種非常有用啊(^O^)／</string>
@@ -75,7 +74,6 @@
     <string name="obfs">混淆</string>
     <string name="obfs_param">混淆參數</string>
     <string name="uuid">使用者 ID</string>
-    <string name="alter_id">替代 ID</string>
     <string name="network">網路</string>
     <string name="header_type">標頭類型</string>
     <string name="tls">使用 TLS</string>
@@ -184,11 +182,9 @@
     <string name="key_opt">金鑰（選用）</string>
     <string name="username">使用者名稱</string>
     <string name="connection_test_url">連線測試 URL</string>
-    <string name="fakedns_message">可能導致其他應用程式在代理停止後需要重新啟動以重新連線至網路</string>
     <string name="transproxy_mode">透明代理模式</string>
     <string name="require_transproxy">啟用透明代理傳入伺服器</string>
     <string name="dns_hosts">網域重寫</string>
-    <string name="enable_fakedns">啟用 FakeDNS</string>
     <string name="dns_routing_message">使用在路由中被略過的直連 DNS 解析網域。請注意潛在的 DNS 洩漏</string>
     <string name="enable_dns_routing">啟用 DNS 路由</string>
     <string name="direct_dns">直連 DNS</string>
@@ -306,7 +302,6 @@
     <string name="append_http_proxy_sum">HTTP 代理將直接被支援的瀏覽器/應用程式使用，而無需經過虛擬網路卡（Android 10+）</string>
     <string name="bypass_lan_in_core_only">僅在 Core 中繞過區域網路</string>
     <string name="bypass_lan_in_core_only_sum">如果 LineageOS 的“允許熱點客戶端使用此裝置的 VPN”無法使用，嘗試啟用此選項。</string>
-    <string name="ss_aead_provider">Shadowsocks AEAD 提供程式</string>
     <string name="trojan_provider">Trojan 提供程式</string>
     <string name="protocol_settings">協議設定</string>
     <string name="group_basic">基本</string>
@@ -318,8 +313,6 @@
     <string name="delete_group_prompt">您真的希望移除此群組嗎？</string>
     <string name="force_resolve">強制解析</string>
     <string name="force_resolve_sum">在更新時將所有網域解析為 IP。主機名和伺服器名稱指示將在可能時被自動附加</string>
-    <string name="force_vmess_aead">強制 VMess AEAD</string>
-    <string name="force_vmess_aead_sum">重寫使用不安全驗證方式的 VMess 設定檔至 AEAD 驗證（alterId 0）</string>
     <string name="deduplication_sum">在更新時移除重複的設定檔</string>
     <string name="raw">原始</string>
     <string name="update_settings">更新設定</string>
@@ -370,13 +363,7 @@
     <string name="ssh_auth_type_none">無</string>
     <string name="no_statistics">暫無統計資料</string>
     <string name="traffic_statistics_summary">可能增加電量消耗</string>
-    <string name="route_need_fds">路由規則 %s 需要前景模式偵測器以生效，但未被啟用。</string>
-    <string name="route_need_vpn">路由規則 %s 需要 VPN 模式以生效，因此被忽略。</string>
-    <string name="background">背景</string>
-    <string name="foreground">前景</string>
-    <string name="foreground_status">前景狀態</string>
-    <string name="foreground_detector_summary">此服務為基於前景狀態的應用程式規則提供支援，如果它未被啟動，結果將永遠為背景。</string>
-    <string name="foreground_detector">前景偵測器</string>
+    <string name="route_need_vpn">路由規則`%s` 需要 VPN 模式以生效，因此被忽略。</string>
     <string name="route_for">%s 的規則</string>
     <string name="app_no_launcher">此應用程式沒有介面。</string>
     <string name="copy_failed">複製失敗。</string>
@@ -407,7 +394,6 @@
     <string name="hysteria_auth_payload">認證承載</string>
     <string name="hysteria_auth_type">認證類型</string>
     <string name="hysteria_obfs">混淆密碼</string>
-    <string name="ss_stream_provider">Shadowsocks 串流加密提供者</string>
     <string name="menu_tools">工具</string>
     <string name="translate_platform">翻譯平台</string>
     <string name="menu_log">記錄檔</string>
@@ -420,7 +406,7 @@
     <string name="wireguard_local_address">本機位址</string>
     <string name="wireguard_public_key">節點公開金鑰</string>
     <string name="wireguard_psk">節點預先共用金鑰</string>
-    <string name="warp_license">Cloudflare Warp 是一個免費的 WireGuard VPN 提供者。使用此服務表示您同意其服務條款：https://www.cloudflare.com/application/terms/</string>
+    <string name="warp_license">[CloudFlare Warp](https://blog.cloudflare.com/1111-warp-better-vpn/) 是一個免費的 WireGuard VPN 提供者。使用此服務表示您同意其 [服務條款](https://www.cloudflare.com/application/terms/)。</string>
     <string name="warp_generate">產生設定檔</string>
     <string name="generating">正在產生……</string>
     <string name="enable_pcap">啟用 Pcap</string>
@@ -430,4 +416,78 @@
     <string name="app_traffic_statistics">應用程式流量統計資料</string>
     <string name="resolve_destination_summary">如果目的地位址是一個網域，則基於 IPv6 策略傳出。</string>
     <string name="destination_override_summary">使用被偵測到的網域複寫目的地位址，而不是僅用於路由</string>
+    <string name="probe_url">自定義測試 URL</string>
+    <string name="group_filter_owners">所有者</string>
+    <string name="route_opt_block_analysis">封鎖分析</string>
+    <string name="route_play_store">%s 谷歌Play商店規則</string>
+    <string name="group_filter_owners_nf">此訂閱中沒有所有者</string>
+    <string name="naive_insecure_concurrency">不安全並發</string>
+    <string name="stun_test">NAT 行為尋找</string>
+    <string name="naive_insecure_concurrency_summary">使用N個並發的隧道能使網路條件較差时更加可用。但數量越多，越易被偵測，安全性越低。由於本項目致力於面對流量分析的安全性，以不安全的方式使用違背了其初忠。
+\n
+\n如一定要使用，請先嘗試 N=2，觀察其是否解決了您的問題。強烈反對於此使用多於4個隧道。</string>
+    <string name="stun_attest_loading">這可能需要數分鐘…</string>
+    <string name="recheck">重新測試</string>
+    <string name="stun_test_summary">使用 STUN 確定客戶端的 NAT 映射行為和 RFC 5780 中定義的 NAT 過濾行為。</string>
+    <string name="start">開始</string>
+    <string name="nat_mapping_behaviour">NAT 映射行為</string>
+    <string name="auto_mtu">自動 MTU</string>
+    <string name="auto_mtu_summary">使用上游網路界面的MTU</string>
+    <string name="backup">備份</string>
+    <string name="backup_rules">路由規則</string>
+    <string name="invalid_backup_file">無效的備份文件</string>
+    <string name="disable_dns_expire_summary">忽略 DNS TTL，直到重新啟動。</string>
+    <string name="tasker_action_start_service">開始服務</string>
+    <string name="tasker_action_stop_service">停止服務</string>
+    <string name="route_ssid">Wi-Fi SSID</string>
+    <string name="missing_permission">缺少權限</string>
+    <string name="location_disabled">位置已禁用</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_bt">藍牙</string>
+    <string name="network_eth">乙太網路</string>
+    <string name="network_data">行動網路</string>
+    <string name="network_type">網路類型</string>
+    <string name="route_need_ssid">路由規則 `%s 需要訪問您的 **Wi-Fi SSID**，但在Android 8.0或以上的系統中需要獲得 **後台定位權限** 並 **啟用定位**</string>
+    <string name="tools_network">網路</string>
+    <string name="backup_settings">設置</string>
+    <string name="backup_import">導入</string>
+    <string name="backup_import_summary">導入將覆蓋現有數據。</string>
+    <string name="backup_importing">正在導入…</string>
+    <string name="backup_groups_and_configurations">分組和配置</string>
+    <string name="backup_summary">如果路由規則不與配置一起備份，則自定義出站將丟失。</string>
+    <string name="backup_not_file">不是一個備份文件，預計 .json，但 %s</string>
+    <string name="address_dependent">地址依賴</string>
+    <string name="endpoint_independent_no_nat">端點獨立 （無 NAT）</string>
+    <string name="endpoint_independent">端點獨立</string>
+    <string name="address_and_port_dependent">地址和端口依賴</string>
+    <string name="nat_filtering_behaviour">NAT 過濾行為</string>
+    <string name="nat_mapping_endpoint_independent">`%s`
+\n
+\n如果你從同一端口發送兩個 UDP 數據包到 NAT 另一端的不同地方，NAT 將使用相同的端口來發送這些數據包。這是唯一有利於 RTC 的映射行為，RFC 4787 要求它作為全部 NAT 的最佳實踐（REQ-1）。如果兩個NAT都這樣做，對於下面描述的所有過濾行為，ICE都將能夠直接連接。這是最需要弄對的設定。這種映射類型對應於 [RFC 3489第5節](https://tools.ietf.org/html/rfc3489#section-5) 中定義的經典STUN中的錐形 NAT。</string>
+    <string name="tasker_blurb_start_profile">啓動配置文件 %s</string>
+    <string name="experimental_reduced_iv_head_entropy">這是 GFWReport 針對在 GFW 上觀察到的隨機流（如封鎖協議的行為）提出的提案。
+\n
+\n此選項將 IV 的前 6 個字節重新映射為可打印字符，啟用後特權網路路徑上的任何人都可以識別協議。</string>
+    <string name="nat_mapping_address_dependent_and_address_and_port_dependent">`%s`
+\n
+\n如果你從相同的端口發送兩個 UDP 數據包到 NAT 另一側的不同地方，並且目標地址是相同的，那麼NAT 將使用相同的端口來發送這些數據包；目標端口並不重要。發送到兩個不同的主機將使用不同的端口。如果雙方都使用它，那就需要使用 TURN 服務器，除非雙方都不做特定端口過濾，而且至少有一方為 `端點獨立過濾`。如果你想使用 webrtc 或其他使用 P2P UDP 網絡的東西，***不要像這樣配置你的 NAT***。這種映射類型（大致）對應於 [RFC 3489第5節](https://tools.ietf.org/html/rfc3489#section-5) 中定義的經典 STUN 中的對稱 NATs。</string>
+    <string name="nat_filtering_endpoint_independent">`端點獨立`
+\n
+\n這是三種方式中最寬容的一種。一旦您將 UDP 數據包發送到 NAT 另一端的任何地方，NAT 另一端的任何其他東西都可以在該端口上將 UDP 數據包發送回您。這種過濾策略讓系統管理員驚出一身冷汗，但 RFC 4787 建議在實時通信（或其他需要應用程序透明性的事物；例如游戲）是優先事項時使用它。請注意，如果您的 NAT 映射行為配置錯誤，這將無法很好地進行補償。 獲得正確的映射行為更為重要。</string>
+    <string name="disable_dns_expire">禁用 DNS 過期</string>
+    <string name="mtu">最大傳輸單元</string>
+    <string name="tasker_settings">Tasker 設置</string>
+    <string name="tasker_action">行動</string>
+    <string name="tasker_start_current_profile">當前配置文件</string>
+    <string name="root_ca_provider">根證書機構</string>
+    <string name="root_ca_mozilla">Mozilla</string>
+    <string name="root_ca_system">系統</string>
+    <string name="packet_encoding">包編碼</string>
+    <string name="nat_filtering_address_dependent">`地址相關`
+\n
+\n這是系統管理員更容易證明的中間立場，但我的印象是它更難配置。 一旦您將 UDP 數據包發送到 NAT 另一端的主機，不管主機從哪個端口發送，NAT 都將允許從該主機返回 UDP 流量，但不允許來自其他地址的入站 UDP 流量。 如果您的映射行為配置得當，這應該與`端點獨立過濾`一樣好。</string>
+    <string name="nat_filtering_address_and_port_dependent">`地址和端口依賴`
+\n
+\n這是三種方式中最嚴格的一種。 您的 NAT 將只允許從您發送 UDP 數據包的確切位置返回流量。 ***不推薦***使用此方式，即使您已經正確配置了映射行為，因為當另一個 NAT 配置錯誤（相當常見）時，性能會很差。</string>
+    <string name="use_local_dns_as_direct_dns">使用本地 DNS 作為直連 DNS</string>
 </resources>

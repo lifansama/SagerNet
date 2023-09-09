@@ -25,6 +25,8 @@ import android.os.Binder
 import android.os.Build
 import androidx.preference.PreferenceDataStore
 import io.nekohasekai.sagernet.*
+import io.nekohasekai.sagernet.bg.VpnService
+import io.nekohasekai.sagernet.database.preference.InMemoryDatabase
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.database.preference.PublicDatabase
 import io.nekohasekai.sagernet.database.preference.RoomPreferenceDataStore
@@ -34,15 +36,15 @@ import io.nekohasekai.sagernet.utils.DirectBoot
 object DataStore : OnPreferenceDataStoreChangeListener {
 
     val configurationStore = RoomPreferenceDataStore(PublicDatabase.kvPairDao)
-    val profileCacheStore = RoomPreferenceDataStore(SagerDatabase.profileCacheDao)
+    val profileCacheStore = RoomPreferenceDataStore(InMemoryDatabase.kvPairDao)
 
     fun init() {
-        if (Build.VERSION.SDK_INT >= 24) {
+        /*if (Build.VERSION.SDK_INT >= 24) {
             SagerNet.deviceStorage.moveDatabaseFrom(SagerNet.application, Key.DB_PUBLIC)
         }
         if (Build.VERSION.SDK_INT >= 24 && directBootAware && SagerNet.user.isUserUnlocked) {
             DirectBoot.flushTrafficStats()
-        }
+        }*/
     }
 
     var selectedProxy by configurationStore.long(Key.PROFILE_ID)
@@ -112,15 +114,18 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var speedInterval by configurationStore.stringToInt(Key.SPEED_INTERVAL)
 
     // https://github.com/SagerNet/SagerNet/issues/180
-    var remoteDns by configurationStore.string(Key.REMOTE_DNS) { "https://1.0.0.1/dns-query" }
-    var directDns by configurationStore.string(Key.DIRECT_DNS) { "https+local://223.5.5.5/dns-query" }
-    var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING)
+    var remoteDns by configurationStore.stringNotBlack(Key.REMOTE_DNS) { "tls://dns.google" }
+    var directDns by configurationStore.stringNotBlack(Key.DIRECT_DNS) { "tls+local://dot.pub" }
+    var useLocalDnsAsDirectDns by configurationStore.boolean(Key.USE_LOCAL_DNS_AS_DIRECT_DNS) { true }
     var hosts by configurationStore.string(Key.DNS_HOSTS)
+    var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING) { true }
+    var disableDnsExpire by configurationStore.boolean(Key.DISABLE_DNS_EXPIRE)
 
     var securityAdvisory by configurationStore.boolean(Key.SECURITY_ADVISORY) { true }
     var rulesProvider by configurationStore.stringToInt(Key.RULES_PROVIDER)
     var enableLog by configurationStore.boolean(Key.ENABLE_LOG) { BuildConfig.DEBUG }
     var enablePcap by configurationStore.boolean(Key.ENABLE_PCAP)
+    var acquireWakeLock by configurationStore.boolean(Key.ACQUIRE_WAKE_LOCK)
 
     // hopefully hashCode = mHandle doesn't change, currently this is true from KitKat to Nougat
     private val userIndex by lazy { Binder.getCallingUserHandle().hashCode() }
@@ -152,6 +157,18 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         if (configurationStore.getString(Key.TRANSPROXY_PORT) == null) {
             transproxyPort = transproxyPort
         }
+        if (configurationStore.getString(Key.DNS_HOSTS) == null) {
+            hosts = hosts
+        }
+        if (configurationStore.getString(Key.REMOTE_DNS).isNullOrBlank()) {
+            remoteDns = remoteDns
+        }
+        if (configurationStore.getString(Key.DIRECT_DNS).isNullOrBlank()) {
+            directDns = directDns
+        }
+        if (configurationStore.getString(Key.MTU).isNullOrBlank()) {
+            mtu = mtu
+        }
     }
 
 
@@ -172,21 +189,23 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var enableMux by configurationStore.boolean(Key.ENABLE_MUX)
     var enableMuxForAll by configurationStore.boolean(Key.ENABLE_MUX_FOR_ALL)
     var muxConcurrency by configurationStore.stringToInt(Key.MUX_CONCURRENCY) { 8 }
-    var showStopButton by configurationStore.boolean(Key.SHOW_STOP_BUTTON)
     var showDirectSpeed by configurationStore.boolean(Key.SHOW_DIRECT_SPEED)
 
     val persistAcrossReboot by configurationStore.boolean(Key.PERSIST_ACROSS_REBOOT) { true }
-    val canToggleLocked: Boolean get() = configurationStore.getBoolean(Key.DIRECT_BOOT_AWARE) == true
+    val canToggleLocked: Boolean get() = false//configurationStore.getBoolean(Key.DIRECT_BOOT_AWARE) == true
     val directBootAware: Boolean get() = SagerNet.directBootSupported && canToggleLocked
 
-    var requireHttp by configurationStore.boolean(Key.REQUIRE_HTTP) { true }
+    var requireHttp by configurationStore.boolean(Key.REQUIRE_HTTP) { false }
     var appendHttpProxy by configurationStore.boolean(Key.APPEND_HTTP_PROXY) { true }
     var requireTransproxy by configurationStore.boolean(Key.REQUIRE_TRANSPROXY)
     var transproxyMode by configurationStore.stringToInt(Key.TRANSPROXY_MODE)
     var connectionTestURL by configurationStore.string(Key.CONNECTION_TEST_URL) { CONNECTION_TEST_URL }
     var alwaysShowAddress by configurationStore.boolean(Key.ALWAYS_SHOW_ADDRESS)
 
-    var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.GVISOR }
+    var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.SYSTEM }
+
+    var useUpstreamInterfaceMTU by configurationStore.boolean(Key.USE_UPSTREAM_INTERFACE_MTU) { true }
+    var mtu by configurationStore.stringToInt(Key.MTU) { VpnService.DEFAULT_MTU }
 
     var appTrafficStatistics by configurationStore.boolean(Key.APP_TRAFFIC_STATISTICS)
     var profileTrafficStatistics by configurationStore.boolean(Key.PROFILE_TRAFFIC_STATISTICS) { true }
@@ -194,6 +213,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     // protocol
 
     var providerTrojan by configurationStore.stringToInt(Key.PROVIDER_TROJAN)
+    var providerRootCA by configurationStore.stringToInt(Key.PROVIDER_ROOT_CA)
+    var providerInstaller by configurationStore.stringToInt(Key.PROVIDER_INSTALLER)
 
     // cache
 
@@ -215,7 +236,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var serverObfsParam by profileCacheStore.string(Key.SERVER_OBFS_PARAM)
 
     var serverUserId by profileCacheStore.string(Key.SERVER_USER_ID)
-    var serverAlterId by profileCacheStore.stringToInt(Key.SERVER_ALTER_ID)
     var serverSecurity by profileCacheStore.string(Key.SERVER_SECURITY)
     var serverNetwork by profileCacheStore.string(Key.SERVER_NETWORK)
     var serverHeader by profileCacheStore.string(Key.SERVER_HEADER)
@@ -227,12 +247,14 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var serverALPN by profileCacheStore.string(Key.SERVER_ALPN)
     var serverCertificates by profileCacheStore.string(Key.SERVER_CERTIFICATES)
     var serverPinnedCertificateChain by profileCacheStore.string(Key.SERVER_PINNED_CERTIFICATE_CHAIN)
+    var serverFlow by profileCacheStore.string(Key.SERVER_FLOW)
     var serverQuicSecurity by profileCacheStore.string(Key.SERVER_QUIC_SECURITY)
     var serverWsMaxEarlyData by profileCacheStore.stringToInt(Key.SERVER_WS_MAX_EARLY_DATA)
     var serverWsBrowserForwarding by profileCacheStore.boolean(Key.SERVER_WS_BROWSER_FORWARDING)
     var serverEarlyDataHeaderName by profileCacheStore.string(Key.SERVER_EARLY_DATA_HEADER_NAME)
     var serverHeaders by profileCacheStore.string(Key.SERVER_HEADERS)
     var serverAllowInsecure by profileCacheStore.boolean(Key.SERVER_ALLOW_INSECURE)
+    var serverPacketEncoding by profileCacheStore.stringToInt(Key.SERVER_PACKET_ENCODING)
 
     var serverVMessExperimentalAuthenticatedLength by profileCacheStore.boolean(Key.SERVER_VMESS_EXPERIMENTAL_AUTHENTICATED_LENGTH)
     var serverVMessExperimentalNoTerminationSignal by profileCacheStore.boolean(Key.SERVER_VMESS_EXPERIMENTAL_NO_TERMINATION_SIGNAL)
@@ -248,6 +270,17 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var serverPrivateKey by profileCacheStore.string(Key.SERVER_PRIVATE_KEY)
     var serverLocalAddress by profileCacheStore.string(Key.SERVER_LOCAL_ADDRESS)
     var serverInsecureConcurrency by profileCacheStore.stringToInt(Key.SERVER_INSECURE_CONCURRENCY)
+    var serverMTU by profileCacheStore.stringToInt(Key.SERVER_MTU)
+    var serverReducedIvHeadEntropy by profileCacheStore.boolean(Key.SERVER_REDUCED_IV_HEAD_ENTROPY)
+    var serverUoT by profileCacheStore.boolean(Key.SERVER_UDP_OVER_TCP)
+    var serverWithoutBrookProtocol by profileCacheStore.boolean(Key.SERVER_WITHOUT_BROOK_PROTOCOL)
+    var serverGrpcMode by profileCacheStore.string(Key.SERVER_GRPC_MODE)
+    var serverEncryptedProtocolExtension by profileCacheStore.boolean(Key.SERVER_ENCRYPTED_PROTOCOL_EXTENSION)
+
+    var serverUDPRelayMode by profileCacheStore.string(Key.SERVER_UDP_RELAY_MODE)
+    var serverCongestionController by profileCacheStore.string(Key.SERVER_CONGESTION_CONTROLLER)
+    var serverDisableSNI by profileCacheStore.boolean(Key.SERVER_DISABLE_SNI)
+    var serverReduceRTT by profileCacheStore.boolean(Key.SERVER_REDUCE_RTT)
 
     var balancerType by profileCacheStore.stringToInt(Key.BALANCER_TYPE)
     var balancerGroup by profileCacheStore.stringToLong(Key.BALANCER_GROUP)
@@ -270,7 +303,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var routeReverse by profileCacheStore.boolean(Key.ROUTE_REVERSE)
     var routeRedirect by profileCacheStore.string(Key.ROUTE_REDIRECT)
     var routePackages by profileCacheStore.string(Key.ROUTE_PACKAGES)
-    var routeForegroundStatus by profileCacheStore.string(Key.ROUTE_FOREGROUND_STATUS)
+    var routeNetworkType by profileCacheStore.string(Key.ROUTE_NETWORK_TYPE)
+    var routeSSID by profileCacheStore.string(Key.ROUTE_SSID)
 
     var serverConfig by profileCacheStore.string(Key.SERVER_CONFIG)
 
@@ -283,14 +317,16 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var subscriptionToken by profileCacheStore.string(Key.SUBSCRIPTION_TOKEN)
     var subscriptionForceResolve by profileCacheStore.boolean(Key.SUBSCRIPTION_FORCE_RESOLVE)
     var subscriptionDeduplication by profileCacheStore.boolean(Key.SUBSCRIPTION_DEDUPLICATION)
-    var subscriptionForceVMessAEAD by profileCacheStore.boolean(Key.SUBSCRIPTION_FORCE_VMESS_AEAD) { true }
     var subscriptionUpdateWhenConnectedOnly by profileCacheStore.boolean(Key.SUBSCRIPTION_UPDATE_WHEN_CONNECTED_ONLY)
     var subscriptionUserAgent by profileCacheStore.string(Key.SUBSCRIPTION_USER_AGENT)
     var subscriptionAutoUpdate by profileCacheStore.boolean(Key.SUBSCRIPTION_AUTO_UPDATE)
     var subscriptionAutoUpdateDelay by profileCacheStore.stringToInt(Key.SUBSCRIPTION_AUTO_UPDATE_DELAY) { 360 }
 
+    var taskerAction by profileCacheStore.stringToInt(Key.TASKER_ACTION)
+    var taskerProfile by profileCacheStore.stringToInt(Key.TASKER_PROFILE)
+    var taskerProfileId by profileCacheStore.long(Key.TASKER_PROFILE_ID) { -1L }
+
     var rulesFirstCreate by profileCacheStore.boolean("rulesFirstCreate")
-    var systemDnsFinal by profileCacheStore.string("systemDnsFinal")
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         when (key) {

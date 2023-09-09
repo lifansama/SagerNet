@@ -52,8 +52,7 @@ import com.google.android.material.tabs.TabLayoutMediator
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.aidl.TrafficStats
 import io.nekohasekai.sagernet.bg.BaseService
-import io.nekohasekai.sagernet.bg.test.LocalDnsInstance
-import io.nekohasekai.sagernet.bg.test.UrlTest
+import io.nekohasekai.sagernet.bg.test.V2RayTestInstance
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.databinding.LayoutProfileBinding
 import io.nekohasekai.sagernet.databinding.LayoutProfileListBinding
@@ -71,25 +70,29 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import libcore.Libcore
-import okhttp3.internal.closeQuietly
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.UnknownHostException
+import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.zip.ZipInputStream
+import kotlin.concurrent.timerTask
 
 class ConfigurationFragment @JvmOverloads constructor(
-    val select: Boolean = false,
-    val selectedItem: ProxyEntity? = null,
+    val select: Boolean = false, val selectedItem: ProxyEntity? = null, val titleRes: Int = 0
 ) : ToolbarFragment(R.layout.layout_group_list),
     PopupMenu.OnMenuItemClickListener,
     Toolbar.OnMenuItemClickListener {
 
+    interface SelectCallback {
+        fun returnProfile(profileId: Long)
+    }
+
     lateinit var adapter: GroupPagerAdapter
     lateinit var tabLayout: TabLayout
     lateinit var groupPager: ViewPager2
-    val selectedGroup get() = if (tabLayout.isGone) adapter.groupList[0] else adapter.groupList[tabLayout.selectedTabPosition]
+    val selectedGroup get() = if (tabLayout.isGone && adapter.groupList.size > 0) adapter.groupList[0] else (if (adapter.groupList.size > 0 && tabLayout.selectedTabPosition > -1) adapter.groupList[tabLayout.selectedTabPosition] else ProxyGroup())
     val alwaysShowAddress by lazy { DataStore.alwaysShowAddress }
     val securityAdvisory by lazy { DataStore.securityAdvisory }
 
@@ -103,13 +106,25 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
     }
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        if (savedInstanceState != null) {
+            parentFragmentManager.beginTransaction()
+                .setReorderingAllowed(false)
+                .detach(this)
+                .attach(this)
+                .commit()
+        }
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         if (!select) {
             toolbar.inflateMenu(R.menu.add_profile_menu)
             toolbar.setOnMenuItemClickListener(this)
         } else {
-            toolbar.setTitle(R.string.select_profile)
+            toolbar.setTitle(titleRes)
             toolbar.setNavigationIcon(R.drawable.ic_navigation_close)
             toolbar.setNavigationOnClickListener {
                 requireActivity().finish()
@@ -200,7 +215,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                         RawUpdater.parseRaw(fileText)?.let { pl -> proxies.addAll(pl) }
                         zip.closeEntry()
                     }
-                    zip.closeQuietly()
+                    runCatching {
+                        zip.close()
+                    }
                 } else {
                     val fileText = requireContext().contentResolver.openInputStream(file)!!.use {
                         it.bufferedReader().readText()
@@ -316,6 +333,12 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
             R.id.action_new_hysteria -> {
                 startActivity(Intent(requireActivity(), HysteriaSettingsActivity::class.java))
+            }
+            R.id.action_new_mieru -> {
+                startActivity(Intent(requireActivity(), MieruSettingsActivity::class.java))
+            }
+            R.id.action_new_tuic -> {
+                startActivity(Intent(requireActivity(), TuicSettingsActivity::class.java))
             }
             R.id.action_new_ssh -> {
                 startActivity(Intent(requireActivity(), SSHSettingsActivity::class.java))
@@ -513,25 +536,45 @@ class ConfigurationFragment @JvmOverloads constructor(
         val binding = LayoutProgressListBinding.inflate(layoutInflater)
         val builder = MaterialAlertDialogBuilder(requireContext()).setView(binding.root)
             .setNegativeButton(android.R.string.cancel) { _, _ ->
+                close()
                 cancel()
             }
             .setCancelable(false)
         lateinit var cancel: () -> Unit
         val results = ArrayList<ProxyEntity>()
         val adapter = TestAdapter()
+        val scrollTimer = Timer("insert timer")
+        var currentTask: TimerTask? = null
 
-        suspend fun insert(profile: ProxyEntity) {
+        fun insert(profile: ProxyEntity) {
             binding.listView.post {
                 results.add(profile)
-                adapter.notifyItemInserted(results.size - 1)
-                binding.listView.scrollToPosition(results.size - 1)
+                val index = results.size - 1
+                adapter.notifyItemInserted(index)
+                scrollTimer.schedule(timerTask {
+                    binding.listView.post {
+                        if (currentTask == this) binding.listView.smoothScrollToPosition(index)
+                    }
+                }.also {
+                    currentTask?.cancel()
+                    currentTask = it
+                }, 500L)
             }
         }
 
-        suspend fun update(profile: ProxyEntity) {
+        fun update(profile: ProxyEntity) {
             binding.listView.post {
                 val index = results.indexOf(profile)
                 adapter.notifyItemChanged(index)
+            }
+        }
+
+        fun close() {
+            try {
+                scrollTimer.schedule(timerTask {
+                    scrollTimer.cancel()
+                }, 0)
+            } catch (ignored: IllegalStateException) {
             }
         }
 
@@ -599,14 +642,15 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     }
 
-    fun stopService() {
+    suspend fun stopService() {
         if (SagerNet.started) SagerNet.stopService()
+        while (SagerNet.started) {
+            delay(100L)
+        }
     }
 
     @Suppress("EXPERIMENTAL_API_USAGE")
     fun pingTest(icmpPing: Boolean) {
-        stopService()
-
         val test = TestDialog()
         val testJobs = mutableListOf<Job>()
         val dialog = test.builder.show()
@@ -629,9 +673,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                 }
             }
+            stopService()
             val profiles = ConcurrentLinkedQueue(profilesUnfiltered)
             val testPool = newFixedThreadPoolContext(5, "Connection test pool")
-            repeat(5) {
+            repeat(6) {
                 testJobs.add(launch(testPool) {
                     while (isActive) {
                         val profile = profiles.poll() ?: break
@@ -703,7 +748,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                                     profile.ping = (SystemClock.elapsedRealtime() - start).toInt()
                                     test.update(profile)
                                 } finally {
-                                    socket.closeQuietly()
+                                    runCatching {
+                                        socket.close()
+                                    }
                                 }
                             }
                         } catch (e: Exception) {
@@ -739,6 +786,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             testJobs.joinAll()
             testPool.close()
+            test.close()
 
             ProfileManager.updateProfile(test.results.filter { it.status != 0 })
 
@@ -758,12 +806,9 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     @Suppress("EXPERIMENTAL_API_USAGE")
     fun urlTest() {
-        stopService()
-
         val test = TestDialog()
         val dialog = test.builder.show()
         val testJobs = mutableListOf<Job>()
-        val dnsInstance = LocalDnsInstance()
 
         val mainJob = runOnDefaultDispatcher {
             val group = DataStore.currentGroup()
@@ -785,10 +830,12 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
             }
             val profiles = ConcurrentLinkedQueue(profilesUnfiltered)
-            val urlTest = UrlTest()
-            dnsInstance.launch()
+            stopService()
 
-            repeat(5) {
+            val link = DataStore.connectionTestURL
+            val timeout = 5000
+
+            repeat(6) {
                 testJobs.add(launch {
                     while (isActive) {
                         val profile = profiles.poll() ?: break
@@ -796,7 +843,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                         test.insert(profile)
 
                         try {
-                            val result = urlTest.doTest(profile)
+                            val instance = V2RayTestInstance(profile, link, timeout)
+                            val result = instance.use {
+                                it.doTest()
+                            }
                             profile.status = 1
                             profile.ping = result
                         } catch (e: PluginManager.PluginNotFoundException) {
@@ -814,14 +864,13 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             testJobs.joinAll()
-            dnsInstance.closeQuietly()
+            test.close()
             onMainDispatcher {
                 test.binding.progressCircular.isGone = true
                 dialog.getButton(DialogInterface.BUTTON_NEGATIVE).setText(android.R.string.ok)
             }
         }
         test.cancel = {
-            dnsInstance.closeQuietly()
             mainJob.cancel()
             runOnDefaultDispatcher {
                 GroupManager.postReload(DataStore.currentGroupId())
@@ -836,51 +885,53 @@ class ConfigurationFragment @JvmOverloads constructor(
         var selectedGroupIndex = 0
         var groupList: ArrayList<ProxyGroup> = ArrayList()
 
-        fun reload() {
+        fun reload(now: Boolean = false) {
 
             if (!select) {
                 groupPager.unregisterOnPageChangeCallback(updateSelectedCallback)
             }
 
             runOnDefaultDispatcher {
-                groupList = ArrayList(SagerDatabase.groupDao.allGroups())
-                if (groupList.isEmpty()) {
+                var newGroupList = ArrayList(SagerDatabase.groupDao.allGroups())
+                if (newGroupList.isEmpty()) {
                     SagerDatabase.groupDao.createGroup(ProxyGroup(ungrouped = true))
-                    groupList = ArrayList(SagerDatabase.groupDao.allGroups())
+                    newGroupList = ArrayList(SagerDatabase.groupDao.allGroups())
                 }
-                groupList.find { it.ungrouped }?.let {
+                newGroupList.find { it.ungrouped }?.let {
                     if (SagerDatabase.proxyDao.countByGroup(it.id) == 0L) {
-                        groupList.remove(it)
+                        newGroupList.remove(it)
                     }
                 }
 
-                val selectedGroup = selectedItem?.groupId ?: DataStore.currentGroupId()
-                if (selectedGroup != 0L) {
-                    val selectedIndex = groupList.indexOfFirst { it.id == selectedGroup }
-                    selectedGroupIndex = selectedIndex
-
-                    onMainDispatcher {
-                        groupPager.setCurrentItem(selectedIndex, false)
+                var selectedGroup = selectedItem?.groupId ?: DataStore.currentGroupId()
+                var set = false
+                if (selectedGroup > 0L) {
+                    selectedGroupIndex = newGroupList.indexOfFirst { it.id == selectedGroup }
+                    set = true
+                } else if (groupList.size == 1) {
+                    selectedGroup = groupList[0].id
+                    if (DataStore.selectedGroup != selectedGroup) {
+                        DataStore.selectedGroup = selectedGroup
                     }
                 }
 
-                groupPager.post {
-                    if (!select) {
-                        groupPager.registerOnPageChangeCallback(updateSelectedCallback)
-                    }
-                }
-
-                onMainDispatcher {
+                val runFunc = if (now) requireActivity()::runOnUiThread else groupPager::post
+                runFunc {
+                    groupList = newGroupList
                     notifyDataSetChanged()
+                    if (set) groupPager.setCurrentItem(selectedGroupIndex, false)
                     val hideTab = groupList.size < 2
                     tabLayout.isGone = hideTab
                     toolbar.elevation = if (hideTab) 0F else dp2px(4).toFloat()
+                    if (!select) {
+                        groupPager.registerOnPageChangeCallback(updateSelectedCallback)
+                    }
                 }
             }
         }
 
         init {
-            reload()
+            reload(true)
         }
 
         override fun getItemCount(): Int {
@@ -1005,8 +1056,8 @@ class ConfigurationFragment @JvmOverloads constructor(
         lateinit var layoutManager: LinearLayoutManager
         lateinit var configurationListView: RecyclerView
 
-        val select by lazy { (parentFragment as ConfigurationFragment).select }
-        val selectedItem by lazy { (parentFragment as ConfigurationFragment).selectedItem }
+        val parent get() = parentFragment as? ConfigurationFragment
+        fun requirePrent() = requireParentFragment() as ConfigurationFragment
 
         override fun onResume() {
             super.onResume()
@@ -1024,9 +1075,9 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
 
         fun checkOrderMenu() {
-            if (select) return
+            if (parent?.select == true) return
 
-            val pf = requireParentFragment() as? ToolbarFragment ?: return
+            val pf = parentFragment as? ToolbarFragment ?: return
             val menu = pf.toolbar.menu
             val origin = menu.findItem(R.id.action_order_origin)
             val byName = menu.findItem(R.id.action_order_by_name)
@@ -1069,6 +1120,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
 
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+            val parent = parent ?: return
             if (!::proxyGroup.isInitialized) return
 
             configurationListView = view.findViewById(R.id.configuration_list)
@@ -1080,7 +1132,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             configurationListView.adapter = adapter
             configurationListView.setItemViewCacheSize(20)
 
-            if (!select && proxyGroup.type == GroupType.BASIC) {
+            if (!parent.select && proxyGroup.type == GroupType.BASIC) {
 
                 undoManager = UndoSnackbarManager(activity as MainActivity, adapter)
 
@@ -1312,6 +1364,13 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             fun reloadProfiles() {
+                val selectedItem = try {
+                    requirePrent().selectedItem
+                } catch (ignored: IllegalStateException) {
+                    return
+                }
+
+
                 var newProfiles = SagerDatabase.proxyDao.getByGroup(proxyGroup.id)
                 val subscription = proxyGroup.subscription
                 if (subscription != null) {
@@ -1387,13 +1446,13 @@ class ConfigurationFragment @JvmOverloads constructor(
             val shareButton: ImageView = view.findViewById(R.id.shareIcon)
 
             fun bind(proxyEntity: ProxyEntity) {
-                val pf = parentFragment as? ConfigurationFragment ?: return
+                val parent = parent ?: return
 
                 entity = proxyEntity
 
-                if (select) {
+                if (parent.select) {
                     view.setOnClickListener {
-                        (requireActivity() as ProfileSelectActivity).returnProfile(proxyEntity.id)
+                        (requireActivity() as SelectCallback).returnProfile(proxyEntity.id)
                     }
                 } else {
                     val pa = activity as MainActivity
@@ -1414,9 +1473,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                             if (update) {
                                 ProfileManager.postUpdate(lastSelected)
                                 if (pa.state.canStop && reloadAccess.tryLock()) {
-                                    SagerNet.stopService()
-                                    delay(1000L)
-                                    SagerNet.startService()
+                                    SagerNet.reloadService()
                                     reloadAccess.unlock()
                                 }
                             } else if (SagerNet.isTv) {
@@ -1458,7 +1515,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     address = address.substring(0, 27) + "..."
                 }
 
-                if (proxyEntity.requireBean().name.isBlank() || !pf.alwaysShowAddress) {
+                if (proxyEntity.requireBean().name.isBlank() || !parent.alwaysShowAddress) {
                     address = ""
                 }
 
@@ -1500,11 +1557,12 @@ class ConfigurationFragment @JvmOverloads constructor(
                     )
                 }
 
-                editButton.isGone = select
+                editButton.isGone = parent.select
 
                 runOnDefaultDispatcher {
-                    val selected = (selectedItem?.id ?: DataStore.selectedProxy) == proxyEntity.id
-                    val started = selected && SagerNet.started && DataStore.currentProfile == proxyEntity.id
+                    val selected = (parent.selectedItem?.id
+                        ?: DataStore.selectedProxy) == proxyEntity.id
+                    val started = selected && SagerNet.started && DataStore.startedProfile == proxyEntity.id
                     onMainDispatcher {
                         editButton.isEnabled = !started
                         selectedView.visibility = if (selected) View.VISIBLE else View.INVISIBLE
@@ -1540,9 +1598,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                         popup.show()
                     }
 
-                    if (!select) {
+                    if (!parent.select) {
 
-                        val validateResult = if (pf.securityAdvisory) {
+                        val validateResult = if (parent.securityAdvisory) {
                             proxyEntity.requireBean().isInsecure()
                         } else ResultLocal
 

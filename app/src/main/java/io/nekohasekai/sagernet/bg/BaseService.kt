@@ -25,10 +25,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.os.Build
-import android.os.IBinder
-import android.os.RemoteCallbackList
-import android.os.RemoteException
+import android.os.*
 import cn.hutool.json.JSONException
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.BootReceiver
@@ -40,12 +37,16 @@ import io.nekohasekai.sagernet.aidl.TrafficStats
 import io.nekohasekai.sagernet.bg.proto.ProxyInstance
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.fmt.Alerts
 import io.nekohasekai.sagernet.fmt.TAG_SOCKS
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.plugin.PluginManager
 import io.nekohasekai.sagernet.utils.PackageCache
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import libcore.AppStats
+import libcore.ErrorHandler
 import libcore.Libcore
 import libcore.TrafficListener
 import java.net.UnknownHostException
@@ -74,10 +75,11 @@ class BaseService {
         var proxy: ProxyInstance? = null
         var notification: ServiceNotification? = null
 
-        val closeReceiver = broadcastReceiver { _, intent ->
+        val receiver = broadcastReceiver { _, intent ->
             when (intent.action) {
                 Intent.ACTION_SHUTDOWN -> service.persistStats()
                 Action.RELOAD -> service.forceLoad()
+                Action.SWITCH_WAKE_LOCK -> service.switchWakeLock()
                 else -> service.stopRunner(keepState = false)
             }
         }
@@ -115,20 +117,24 @@ class BaseService {
 
         override fun registerCallback(cb: ISagerNetServiceCallback) {
             callbacks.register(cb)
+            cb.updateWakeLockStatus(data?.proxy?.service?.wakeLock != null)
         }
 
-        fun broadcast(work: (ISagerNetServiceCallback) -> Unit) {
-            val count = callbacks.beginBroadcast()
-            try {
-                repeat(count) {
-                    try {
-                        work(callbacks.getBroadcastItem(it))
-                    } catch (_: RemoteException) {
-                    } catch (e: Exception) {
+        private val broadcastLock = Mutex()
+        suspend fun broadcast(work: (ISagerNetServiceCallback) -> Unit) {
+            broadcastLock.withLock {
+                val count = callbacks.beginBroadcast()
+                try {
+                    repeat(count) {
+                        try {
+                            work(callbacks.getBroadcastItem(it))
+                        } catch (_: RemoteException) {
+                        } catch (e: Exception) {
+                        }
                     }
+                } finally {
+                    callbacks.finishBroadcast()
                 }
-            } finally {
-                callbacks.finishBroadcast()
             }
         }
 
@@ -141,7 +147,7 @@ class BaseService {
                 if (delayMs == 0L) return
                 val queryTime = System.currentTimeMillis()
                 val sinceLastQueryInSeconds = (queryTime - lastQueryTime).toDouble() / 1000L
-                val proxy = data?.proxy ?: continue
+                val proxy = data?.proxy ?: return
                 lastQueryTime = queryTime
                 val (statsOut, outs) = proxy.outboundStats()
                 val stats = TrafficStats(
@@ -179,7 +185,7 @@ class BaseService {
 
         private suspend fun loopStats() {
             var lastQueryTime = 0L
-            val tun = (data?.proxy?.service as? VpnService)?.getTun() ?: return
+            var tun = (data?.proxy?.service as? VpnService)?.tun ?: return
             if (!tun.trafficStatsEnabled) return
 
             while (true) {
@@ -190,6 +196,7 @@ class BaseService {
                 lastQueryTime = queryTime
 
                 appStats.clear()
+                tun = (data?.proxy?.service as? VpnService)?.tun ?: return
                 tun.readAppTraffics(this)
 
                 val statsList = AppStatsList(appStats.map {
@@ -201,7 +208,11 @@ class BaseService {
                     }
                     AidlAppStats(
                         packageName,
-                        uid, it.tcpConn, it.udpConn, it.tcpConnTotal, it.udpConnTotal,
+                        uid,
+                        it.tcpConn,
+                        it.udpConn,
+                        it.tcpConnTotal,
+                        it.udpConnTotal,
                         it.uplink / sinceLastQueryInSeconds,
                         it.downlink / sinceLastQueryInSeconds,
                         it.uplinkTotal,
@@ -231,7 +242,10 @@ class BaseService {
                     ) == null)
                 ) {
                     check(looper == null)
-                    looper = launch { loop() }
+                    looper = launch {
+                        loop()
+                        looper = null
+                    }
                 }
                 if (data?.state != State.Connected) return@launch
                 val data = data
@@ -243,7 +257,7 @@ class BaseService {
 
         override fun stopListeningForBandwidth(cb: ISagerNetServiceCallback) {
             launch {
-                if (bandwidthListeners.remove(cb.asBinder()) != null && bandwidthListeners.isEmpty()) {
+                if (bandwidthListeners.remove(cb.asBinder()) != null && bandwidthListeners.isEmpty() && looper != null) {
                     looper!!.cancel()
                     looper = null
                 }
@@ -265,15 +279,20 @@ class BaseService {
                 error("core not started")
             }
             try {
-                return Libcore.urlTestV2ray(
-                    data!!.proxy!!.v2rayPoint, TAG_SOCKS, DataStore.connectionTestURL, 5000
+                return Libcore.urlTest(
+                    data!!.proxy!!.v2rayPoint, TAG_SOCKS, DataStore.connectionTestURL, 3000
                 )
             } catch (e: Exception) {
+                Logs.w(e)
                 var msg = e.readableMessage
-                if (msg.lowercase().contains("timeout")) {
-                    msg = app.getString(R.string.connection_test_timeout)
-                } else if (msg.lowercase().contains("refused")) {
-                    msg = app.getString(R.string.connection_test_refused)
+                val msgL = msg.lowercase()
+                when {
+                    msgL.contains("timeout") || msg.contains("deadline") -> {
+                        msg = app.getString(R.string.connection_test_timeout)
+                    }
+                    msg.contains("refused") || msgL.contains("closed pipe") -> {
+                        msg = app.getString(R.string.connection_test_refused)
+                    }
                 }
                 error(msg)
             }
@@ -286,14 +305,33 @@ class BaseService {
                     ) == null)
                 ) {
                     check(statsLooper == null)
-                    statsLooper = launch { loopStats() }
+                    statsLooper = launch {
+                        loopStats()
+                        statsLooper = null
+                    }
+                }
+            }
+        }
+
+        fun checkLoop() {
+            if (bandwidthListeners.isNotEmpty() && looper == null) {
+                looper = launch {
+                    loop()
+                    looper = null
+                }
+            }
+            if (statsListeners.isNotEmpty() && statsLooper == null) {
+                statsLooper = launch {
+                    loopStats()
+                    statsListeners.clear()
+                    statsLooper = null
                 }
             }
         }
 
         override fun stopListeningForStats(cb: ISagerNetServiceCallback) {
             launch {
-                if (statsListeners.remove(cb.asBinder()) != null && statsListeners.isEmpty()) {
+                if (statsListeners.remove(cb.asBinder()) != null && statsListeners.isEmpty() && statsLooper != null) {
                     statsLooper!!.cancel()
                     statsLooper = null
                 }
@@ -303,7 +341,7 @@ class BaseService {
         override fun resetTrafficStats() {
             runOnDefaultDispatcher {
                 SagerDatabase.statsDao.deleteAll()
-                (data?.proxy?.service as? VpnService)?.getTun()?.resetAppTraffics()
+                (data?.proxy?.service as? VpnService)?.tun?.resetAppTraffics()
                 val empty = AppStatsList(emptyList())
                 broadcast { item ->
                     if (statsListeners.contains(item.asBinder())) {
@@ -330,7 +368,15 @@ class BaseService {
         }
 
         override fun getTrafficStatsEnabled(): Boolean {
-            return (data?.proxy?.service as? VpnService)?.getTun()?.trafficStatsEnabled ?: false
+            return (data?.proxy?.service as? VpnService)?.tun?.trafficStatsEnabled ?: false
+        }
+
+        override fun updateSystemRoots(useSystem: Boolean) {
+            Libcore.updateSystemRoots(useSystem)
+        }
+
+        override fun closeConnections(uid: Int) {
+            (data?.proxy?.service as? VpnService)?.tun?.closeConnections(uid)
         }
 
         override fun close() {
@@ -340,7 +386,7 @@ class BaseService {
         }
     }
 
-    interface Interface {
+    interface Interface : ErrorHandler {
         val data: Data
         val tag: String
         fun createNotification(profileName: String): ServiceNotification
@@ -351,6 +397,7 @@ class BaseService {
         fun forceLoad() {
             if (DataStore.selectedProxy == 0L) {
                 stopRunner(false, (this as Context).getString(R.string.profile_empty))
+                return
             }
             val s = data.state
             when {
@@ -373,6 +420,10 @@ class BaseService {
         }
 
         fun killProcesses() {
+            wakeLock?.apply {
+                release()
+                wakeLock = null
+            }
             data.proxy?.close()
         }
 
@@ -391,7 +442,7 @@ class BaseService {
                     killProcesses()
                     val data = data
                     if (data.closeReceiverRegistered) {
-                        unregisterReceiver(data.closeReceiver)
+                        unregisterReceiver(data.receiver)
                         data.closeReceiverRegistered = false
                     }
                     data.binder.profilePersisted(listOfNotNull(data.proxy).map { it.profile.id })
@@ -400,6 +451,12 @@ class BaseService {
 
                 // change the state
                 data.changeState(State.Stopped, msg)
+                DataStore.startedProfile = 0L
+                if (!keepState) DataStore.currentProfile = 0L
+                onDefaultDispatcher {
+                    Libcore.resetConnections()
+                    Libcore.disableConnectionPool()
+                }
                 // stop the service if nothing has bound to it
                 if (restart) startRunner() else { //   BootReceiver.enabled = false
                     stopSelf()
@@ -407,13 +464,53 @@ class BaseService {
             }
         }
 
+        override fun handleError(err: String) {
+            stopRunner(false, err)
+        }
+
         fun persistStats() {
-            Logs.w(Exception())
             data.proxy?.persistStats()
             (this as? VpnService)?.persistAppStats()
         }
 
         suspend fun preInit() {}
+
+        var wakeLock: PowerManager.WakeLock?
+        fun acquireWakeLock()
+        fun switchWakeLock() {
+            runOnMainDispatcher {
+                wakeLock?.apply {
+                    release()
+                    wakeLock = null
+                    data.binder.broadcast {
+                        it.updateWakeLockStatus(false)
+                    }
+                } ?: apply {
+                    acquireWakeLock()
+                    data.binder.broadcast {
+                        it.updateWakeLockStatus(true)
+                    }
+                }
+            }
+        }
+
+        suspend fun lateInit() {
+            wakeLock?.apply {
+                release()
+                wakeLock = null
+            }
+
+            if (DataStore.acquireWakeLock) {
+                acquireWakeLock()
+                data.binder.broadcast {
+                    it.updateWakeLockStatus(true)
+                }
+            } else {
+                data.binder.broadcast {
+                    it.updateWakeLockStatus(false)
+                }
+            }
+        }
 
         fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
 
@@ -430,10 +527,11 @@ class BaseService {
             data.proxy = proxy
             BootReceiver.enabled = DataStore.persistAcrossReboot
             if (!data.closeReceiverRegistered) {
-                registerReceiver(data.closeReceiver, IntentFilter().apply {
+                registerReceiver(data.receiver, IntentFilter().apply {
                     addAction(Action.RELOAD)
                     addAction(Intent.ACTION_SHUTDOWN)
                     addAction(Action.CLOSE)
+                    addAction(Action.SWITCH_WAKE_LOCK)
                 }, "$packageName.SERVICE", null)
                 data.closeReceiverRegistered = true
             }
@@ -456,14 +554,18 @@ class BaseService {
                     }
                     DataStore.currentProfile = profile.id
                     DataStore.startedProfile = profile.id
+                    Libcore.enableConnectionPool()
                     startProcesses()
                     data.changeState(State.Connected)
+                    data.binder.checkLoop()
 
                     for ((type, routeName) in proxy.config.alerts) {
                         data.binder.broadcast {
                             it.routeAlert(type, routeName)
                         }
                     }
+
+                    lateInit()
                 } catch (_: CancellationException) { // if the job was cancelled, it is canceller's responsibility to call stopRunner
                 } catch (_: UnknownHostException) {
                     stopRunner(false, getString(R.string.invalid_server))
@@ -474,6 +576,11 @@ class BaseService {
                 } catch (e: ShadowsocksPluginPluginManager.PluginNotFoundException) {
                     Logs.d(e.readableMessage)
                     data.binder.missingPlugin("shadowsocks-" + e.plugin)
+                    stopRunner(false, null)
+                } catch (e: Alerts.RouteAlertException) {
+                    data.binder.broadcast {
+                        it.routeAlert(e.alert, e.routeName)
+                    }
                     stopRunner(false, null)
                 } catch (exc: Throwable) {
                     if (exc is ExpectedException) Logs.d(exc.readableMessage) else Logs.w(exc)

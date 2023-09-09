@@ -38,8 +38,15 @@ public class HysteriaBean extends AbstractBean {
     public Integer authPayloadType;
     public String authPayload;
 
+    public static final int PROTOCOL_UDP = 0;
+    public static final int PROTOCOL_FAKETCP = 1;
+    public static final int PROTOCOL_WECHAT_VIDEO = 2;
+
+    public Integer protocol;
+
     public String obfuscation;
     public String sni;
+    public String alpn;
     public String caText;
 
     public Integer uploadMbps;
@@ -50,12 +57,24 @@ public class HysteriaBean extends AbstractBean {
     public Boolean disableMtuDiscovery;
 
     @Override
+    public boolean allowInsecure() {
+        return allowInsecure;
+    }
+
+    @Override
+    public boolean canMapping() {
+        return protocol != PROTOCOL_FAKETCP;
+    }
+
+    @Override
     public void initializeDefaultValues() {
         super.initializeDefaultValues();
         if (authPayloadType == null) authPayloadType = TYPE_NONE;
         if (authPayload == null) authPayload = "";
+        if (protocol == null) protocol = PROTOCOL_UDP;
         if (obfuscation == null) obfuscation = "";
         if (sni == null) sni = "";
+        if (alpn == null) alpn = "";
         if (caText == null) caText = "";
 
         if (uploadMbps == null) uploadMbps = 10;
@@ -69,12 +88,14 @@ public class HysteriaBean extends AbstractBean {
 
     @Override
     public void serialize(ByteBufferOutput output) {
-        output.writeInt(1);
+        output.writeInt(5);
         super.serialize(output);
         output.writeInt(authPayloadType);
         output.writeString(authPayload);
+        output.writeInt(protocol);
         output.writeString(obfuscation);
         output.writeString(sni);
+        output.writeString(alpn);
 
         output.writeInt(uploadMbps);
         output.writeInt(downloadMbps);
@@ -84,7 +105,6 @@ public class HysteriaBean extends AbstractBean {
         output.writeInt(streamReceiveWindow);
         output.writeInt(connectionReceiveWindow);
         output.writeBoolean(disableMtuDiscovery);
-
     }
 
     @Override
@@ -93,8 +113,14 @@ public class HysteriaBean extends AbstractBean {
         super.deserialize(input);
         authPayloadType = input.readInt();
         authPayload = input.readString();
+        if (version >= 3) {
+            protocol = input.readInt();
+        }
         obfuscation = input.readString();
         sni = input.readString();
+        if (version >= 2) {
+            alpn = input.readString();
+        }
         uploadMbps = input.readInt();
         downloadMbps = input.readInt();
         allowInsecure = input.readBoolean();
@@ -102,7 +128,9 @@ public class HysteriaBean extends AbstractBean {
             caText = input.readString();
             streamReceiveWindow = input.readInt();
             connectionReceiveWindow = input.readInt();
-            disableMtuDiscovery = input.readBoolean();
+            if (version != 4) {
+                disableMtuDiscovery = input.readBoolean();
+            }
         }
     }
 

@@ -21,6 +21,7 @@ package io.nekohasekai.sagernet.utils
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.content.FileProvider
 import com.jakewharton.processphoenix.ProcessPhoenix
 import io.nekohasekai.sagernet.BuildConfig
@@ -38,6 +39,8 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
 
     @Suppress("UNNECESSARY_SAFE_CALL")
     override fun uncaughtException(thread: Thread, throwable: Throwable) {
+
+        Log.e("SagerNet", "uncaughtException", throwable)
 
         val logFile = File.createTempFile("SagerNet Crash Report ",
             ".log",
@@ -72,7 +75,7 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
                     .setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     .putExtra(
                         Intent.EXTRA_STREAM, FileProvider.getUriForFile(
-                            app, BuildConfig.APPLICATION_ID + ".log", logFile
+                            app, BuildConfig.APPLICATION_ID + ".cache", logFile
                         )
                     ), app.getString(R.string.abc_shareactionprovider_share_with)
             )

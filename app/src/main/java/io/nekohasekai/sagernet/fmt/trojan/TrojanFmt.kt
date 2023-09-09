@@ -24,18 +24,17 @@ import cn.hutool.json.JSONObject
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.fmt.LOCALHOST
+import io.nekohasekai.sagernet.ktx.isExpert
 import io.nekohasekai.sagernet.ktx.isIpAddress
-import io.nekohasekai.sagernet.ktx.linkBuilder
-import io.nekohasekai.sagernet.ktx.toLink
+import io.nekohasekai.sagernet.ktx.queryParameter
 import io.nekohasekai.sagernet.ktx.urlSafe
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import libcore.Libcore
 
 // WTF
 // https://github.com/trojan-gfw/igniter/issues/318
 fun parseTrojan(server: String): TrojanBean {
 
-    val link = server.replace("trojan://", "https://").toHttpUrlOrNull()
-        ?: error("invalid trojan link $server")
+    val link = Libcore.parseURL(server)
 
     return TrojanBean().apply {
         serverAddress = link.host
@@ -47,16 +46,19 @@ fun parseTrojan(server: String): TrojanBean {
         }
 
         security = link.queryParameter("security") ?: "tls"
-        sni = link.queryParameter("sni") ?: ""
-        alpn = link.queryParameter("alpn") ?: ""
-        name = link.fragment ?: ""
+        sni = link.queryParameter("sni") ?: link.queryParameter("peer")
+        alpn = link.queryParameter("alpn")
+        name = link.fragment
     }
 
 }
 
 fun TrojanBean.toUri(): String {
 
-    val builder = linkBuilder().username(password).host(serverAddress).port(serverPort)
+    val builder = Libcore.newURL("trojan")
+    builder.host = serverAddress
+    builder.port = serverPort
+    builder.username = password
 
     if (sni.isNotBlank()) {
         builder.addQueryParameter("sni", sni)
@@ -64,18 +66,25 @@ fun TrojanBean.toUri(): String {
     if (alpn.isNotBlank()) {
         builder.addQueryParameter("alpn", alpn)
     }
+    if (isExpert && allowInsecure) {
+        // bad format from where?
+        builder.addQueryParameter("allowInsecure", "1")
+    }
 
     when (security) {
         "tls" -> {
         }
+        "xtls" -> {
+            builder.addQueryParameter("security", security)
+            builder.addQueryParameter("flow", flow)
+        }
     }
 
     if (name.isNotBlank()) {
-        builder.encodedFragment(name.urlSafe())
+        builder.setRawFragment(name.urlSafe())
     }
 
-
-    return builder.toLink("trojan")
+    return builder.string
 
 }
 

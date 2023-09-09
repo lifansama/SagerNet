@@ -70,7 +70,7 @@ public class V2RayConfig {
             public Boolean skipFallback;
             public List<String> domains;
             public List<String> expectIPs;
-            public Boolean concurrent;
+            public boolean concurrency;
 
         }
 
@@ -90,6 +90,7 @@ public class V2RayConfig {
         public Boolean disableFallback;
         public Boolean disableFallbackIfMatch;
 
+        public Boolean disableExpire;
     }
 
     public RoutingObject routing;
@@ -119,7 +120,8 @@ public class V2RayConfig {
             // SagerNet private
 
             public List<Integer> uidList;
-            public List<String> appStatus;
+            public List<String> ssidList;
+            public String networkType;
 
         }
 
@@ -432,6 +434,7 @@ public class V2RayConfig {
 
             public Boolean enabled;
             public Integer concurrency;
+            public String packetEncoding;
 
         }
 
@@ -473,8 +476,12 @@ public class V2RayConfig {
                     return VLESSOutboundConfigurationObject.class;
                 case "shadowsocks":
                     return ShadowsocksOutboundConfigurationObject.class;
+                case "shadowsocks_sing":
+                    return ShadowsocksSingOutboundConfigurationObject.class;
                 case "trojan":
                     return TrojanOutboundConfigurationObject.class;
+                case "trojan_sing":
+                    return TrojanSingOutboundConfigurationObject.class;
                 case "loopback":
                     return LoopbackOutboundConfigurationObject.class;
                 case "wireguard":
@@ -539,6 +546,7 @@ public class V2RayConfig {
 
         public List<ServerObject> servers;
         public String version;
+        public Boolean uot;
 
         public static class ServerObject {
 
@@ -561,6 +569,7 @@ public class V2RayConfig {
     public static class VMessOutboundConfigurationObject implements OutboundConfigurationObject {
 
         public List<ServerObject> vnext;
+        public String packetEncoding;
 
         public static class ServerObject {
 
@@ -594,6 +603,9 @@ public class V2RayConfig {
             public String password;
             public Integer level;
             public String email;
+            public Boolean uot;
+            public Boolean experimentReducedIvHeadEntropy;
+            public Boolean encryptedProtocolExtension;
 
         }
 
@@ -603,9 +615,32 @@ public class V2RayConfig {
 
     }
 
+    public static class ShadowsocksSingOutboundConfigurationObject implements OutboundConfigurationObject {
+
+        public String address;
+        public Integer port;
+        public String method;
+        public String password;
+        public String key;
+        public Boolean reducedIvHeadEntropy;
+
+    }
+
+    public static class TrojanSingOutboundConfigurationObject implements OutboundConfigurationObject {
+
+        public String address;
+        public Integer port;
+        public String password;
+        public String serverName;
+        public List<String> nextProtos;
+        public Boolean insecure;
+
+    }
+
     public static class VLESSOutboundConfigurationObject implements OutboundConfigurationObject {
 
         public List<ServerObject> vnext;
+        public String packetEncoding;
 
         public static class ServerObject {
 
@@ -618,6 +653,7 @@ public class V2RayConfig {
                 public String id;
                 public String encryption;
                 public Integer level;
+                public String flow;
 
             }
 
@@ -636,6 +672,7 @@ public class V2RayConfig {
             public String password;
             public String email;
             public Integer level;
+            public String flow;
 
         }
 
@@ -693,6 +730,7 @@ public class V2RayConfig {
         public String network;
         public String security;
         public TLSObject tlsSettings;
+        public TLSObject xtlsSettings;
         public TcpObject tcpSettings;
         public KcpObject kcpSettings;
         public WebSocketObject wsSettings;
@@ -839,6 +877,7 @@ public class V2RayConfig {
     public static class GrpcObject {
 
         public String serviceName;
+        public String mode;
 
     }
 
@@ -900,6 +939,14 @@ public class V2RayConfig {
         }
     }
 
+    public static class PingObject {
+        public String protocol;
+        public String gateway4;
+        public String gateway6;
+        public Boolean disableIPv6;
+    }
+
+    public PingObject ping;
 
     public void init() {
         if (inbounds != null) {

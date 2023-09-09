@@ -5,7 +5,6 @@
     <string name="project">Project</string>
     <string name="github">Source code</string>
     <string name="telegram">Telegram update channel</string>
-    <string name="oss_licenses">Open source licenses</string>
     <string name="app_version">Version</string>
     <string name="version_x">Version (%s)</string>
     <string name="logcat">Export debug information</string>
@@ -102,9 +101,9 @@
     <string name="obfs">Obfs</string>
     <string name="obfs_param">Obfs Param</string>
     <string name="uuid">User ID</string>
-    <string name="alter_id">Alter ID</string>
     <string name="security">Transport layer encryption</string>
     <string name="network">Network</string>
+    <string name="flow">Flow control algorithm</string>
     <string name="header_type">Header Type</string>
     <string name="ws_host">WebSocket Host</string>
     <string name="ws_path">WebSocket Path</string>
@@ -215,6 +214,8 @@
     <string name="action_hysteria" translatable="false">Hysteria</string>
     <string name="action_ssh" translatable="false">SSH</string>
     <string name="action_wireguard" translatable="false">WireGuard</string>
+    <string name="action_mieru" translatable="false">Mieru</string>
+    <string name="action_tuic" translatable="false">TUIC</string>
     <string name="proxy_chain">Proxy Chain</string>
     <string name="custom_config">Custom Config</string>
     <string name="balancer">Balancer</string>
@@ -340,8 +341,6 @@
     <string name="delete_group_prompt">Are you sure you want to remove this group?</string>
     <string name="force_resolve">Force Resolve</string>
     <string name="force_resolve_sum">Resolve all domain names to IP addresses when updating. Host and SNI will be automatically appended if possible</string>
-    <string name="force_vmess_aead">Force VMess AEAD</string>
-    <string name="force_vmess_aead_sum">Rewrite VMess configuration with insecure authentication method to AEAD (alterId 0)</string>
     <string name="deduplication_sum">Remove duplicate configurations when updating</string>
     <string name="raw">Raw</string>
     <string name="update_settings">Update Settings</string>
@@ -400,45 +399,28 @@
     <string name="group_order_by_name">By Name</string>
     <string name="group_order_by_delay">By Delay</string>
     <string name="plugin_exists_but_on_shit_system">Profile %s requires the %s plugin, but your proprietary equipment vendor (usually surveillance capital giants and malware maker) tampered with your Android, making the plugin unusable.</string>
-
     <string name="shadowsocks_plugin_simple_obfs">Simple Obfs (Shadowsocks Android Plugin)</string>
     <string name="shadowsocks_plugin_v2ray">V2Ray (Shadowsocks Android Plugin)</string>
-
     <string name="traffic_uplink" translatable="false">%s | %s/s ↑</string>
     <string name="traffic_downlink" translatable="false">%s | %s/s ↓</string>
-
     <string name="traffic_uplink_total" translatable="false">%s ↑</string>
     <string name="traffic_downlink_total" translatable="false">%s ↓</string>
     <string name="traffic_active">Active</string>
     <string name="traffic_stats">Statistics</string>
-
     <string name="tcp_connections">%d TCP connections</string>
     <string name="udp_connections">%d UDP connections</string>
-
     <string name="traffic_holder">Open VPN to record traffic statistics</string>
-
     <string name="copy_label">Copy Name</string>
     <string name="copy_package_name">Copy Package Name</string>
     <string name="open_app">Open App</string>
     <string name="open_settings">Open Settings</string>
     <string name="open_market">Open Market</string>
     <string name="create_rule">Create Rule</string>
-
     <string name="copy_success">Copy success!</string>
     <string name="copy_failed">Copy failed.</string>
     <string name="app_no_launcher">The app has no interface.</string>
     <string name="route_for">Rule for %s</string>
-
-    <string name="foreground_detector">Foreground detector</string>
-    <string name="foreground_detector_summary">This service provides support for routing rules based on the foreground state of apps. If it is not started, the result is always in the background.</string>
-
-    <string name="foreground_status">Foreground Status</string>
-    <string name="foreground">Foreground</string>
-    <string name="background">Background</string>
-
-    <string name="route_need_vpn">Routing rule %s relies on the VPN to be in effect, so it is ignored.</string>
-    <string name="route_need_fds">Routing rule %s relies on the Foreground Detector Service to be in effect, but is not enabled.</string>
-
+    <string name="route_need_vpn">Routing rule `%s` relies on the VPN to be in effect, so it is ignored.</string>
     <string name="app_traffic_statistics">App Traffic Statistics</string>
     <string name="profile_traffic_statistics">Profile Traffic Statistics</string>
     <string name="traffic_statistics_summary">May increase power consumption</string>
@@ -449,16 +431,15 @@
     <string name="ssh_public_key">Public Key</string>
     <string name="ssh_private_key">Private Key</string>
     <string name="ssh_private_key_passphrase">Private Key Passphrase</string>
-    <string name="translate_platform">Translate Platform</string>
+    <string name="translate_platform">Translation Platform</string>
     <string name="menu_tools">Tools</string>
     <string name="menu_log">Logs</string>
     <string name="clear_logcat">Clear Logcat</string>
     <string name="wireguard_local_address">Local Address</string>
     <string name="wireguard_public_key">Peer Public Key</string>
     <string name="wireguard_psk">Peer Pre-Shared Key</string>
-
     <string name="cloudflare_wrap" translatable="false">Warp</string>
-    <string name="warp_license">CloudFlare Wrap is a free WireGuard VPN provider. By using it, you agree to the TOS: https://www.cloudflare.com/application/terms/</string>
+    <string name="warp_license">[CloudFlare Warp](https://blog.cloudflare.com/1111-warp-better-vpn/) is a free WireGuard VPN provider. By using it, you agree to the [TOS](https://www.cloudflare.com/application/terms/).</string>
     <string name="warp_generate">Generate Configuration</string>
     <string name="generating">Generating…</string>
     <string name="tun_implementation">TUN Implementation</string>
@@ -472,5 +453,88 @@
     <string name="pcap_notice">Pcap files will be saved to %s</string>
     <string name="naive_insecure_concurrency">Insecure Concurrency</string>
     <string name="naive_insecure_concurrency_summary">Use N concurrent tunnel connections to be more robust under bad network conditions. More connections make the tunneling easier to detect and less secure. This project strives for the strongest security against traffic analysis. Using it in an insecure way defeats its purpose. \n\nIf you must use this, try N=2 first to see if it solves your issues. Strongly recommend against using more than 4 connections here.</string>
+    <string name="stun_test">NAT behaviour discovery</string>
+    <string name="stun_test_summary">Determine the client\'s NAT mapping behaviour and the NAT filtering behaviour defined in RFC 5780 using STUN.</string>
+    <string name="start">Start</string>
+    <string name="recheck">Recheck</string>
+    <string name="stun_attest_loading">This may take a few minutes…</string>
+    <string name="nat_mapping_behaviour">NAT mapping behaviour</string>
+    <string name="endpoint_independent_no_nat">Endpoint independent (no NAT)</string>
+    <string name="endpoint_independent">Endpoint independent</string>
+    <string name="address_dependent">Address dependent</string>
+    <string name="address_and_port_dependent">Address and port dependent</string>
+    <string name="nat_mapping_endpoint_independent">`%s`\n\nIf you send two UDP packets from the same port to different places on the other side of the NAT, the NAT will use the same port to send those packets. This is the only RTC-friendly mapping behavior, and RFC 4787 requires it as a best practice (REQ-1) on all NATs. If both NATs do this, ICE will be able to connect directly, for all of the filtering behaviors described below. This is the most important setting to get right. This mapping type corresponds to the "cone NATs" in the classic STUN defined in [RFC 3489 section 5](https://tools.ietf.org/html/rfc3489#section-5).</string>
+    <string name="nat_mapping_address_dependent_and_address_and_port_dependent">`%s`\n\nIf you send two UDP packets from the same port to different places on the other side of the NAT, the NAT will use the same port to send those packets ff the destination address is the same; the destination port does not matter. Sending to two different hosts will use different ports. This will require the use of a TURN server if both sides are using it, unless neither side is doing port-specific filtering, and at least one is doing `endpoint independent filtering`. If you want webrtc or anything else that uses P2P UDP networking, ***do not configure your NAT like this***. This mapping type (loosely) corresponds to the "symmetric NATs" in the classic STUN defined in [RFC 3489 section 5](https://tools.ietf.org/html/rfc3489#section-5).</string>
+    <string name="nat_filtering_behaviour">NAT filtering behaviour</string>
+    <string name="nat_filtering_endpoint_independent">`Endpoint independent`\n\nThis is the most permissive of the three. Once you have sent a UDP packet to anywhere on the other side of the NAT, anything else on the other side of the NAT can send UDP packets back to you on that port. This filtering policy gives sysadmins cold sweats, but RFC 4787 recommends its use when real-time-communication (or other things that require "application transparency"; eg gaming) is a priority. Note that this will not do a very good job of compensating if your NAT\'s mapping behavior is misconfigured. It is more important to get the mapping behavior right.</string>
+    <string name="nat_filtering_address_dependent">`Address dependent`\n\nThis is a middle ground that sysadmins have an easier time justifying, but my impression is that it is harder to configure. Once you have sent a UDP packet to a host on the other side of the NAT, the NAT will allow return UDP traffic from that host, regardless of the port that host sends from, but will not allow inbound UDP traffic from other addresses. If your mapping behavior is configured appropriately, this should function as well as `endpoint independent filtering`.</string>
+    <string name="nat_filtering_address_and_port_dependent">`Address and port dependent`\n\nThis is the strictest of the three. Your NAT will only allow return traffic from exactly where you sent your UDP packet. Using this is ***not recommended***, even if you configure mapping behavior correctly, because it will work poorly when the other NAT is misconfigured (fairly common).</string>
+    <string name="disable_dns_expire">Disable DNS Expire</string>
+    <string name="disable_dns_expire_summary">Ignore DNS TTL until restart.</string>
+    <string name="route_ssid">Wi-Fi SSID</string>
+    <string name="missing_permission">Missing Permission</string>
+    <string name="location_disabled">Location Disabled</string>
+    <string name="route_need_ssid">Routing rule `%s` requires access to your **Wi-Fi SSID**, but this requires **background location permission** and **location enabled** on Android 8.0 or above</string>
+    <string name="network_type">Network Type</string>
+    <string name="network_data">Mobile Data</string>
+    <string name="network_wifi">Wi-Fi</string>
+    <string name="network_bt">Bluetooth</string>
+    <string name="network_eth">Ethernet</string>
+    <string name="tools_network">Network</string>
+    <string name="backup">Backup</string>
+    <string name="backup_groups_and_configurations">Groups and configurations</string>
+    <string name="backup_rules">Routing rules</string>
+    <string name="backup_settings">Settings</string>
+    <string name="backup_summary">If the routing settings are not backed up with configurations, then custom outbounds will be lost.</string>
+    <string name="backup_not_file">Not an backup file: excepted .json, but %s</string>
+    <string name="invalid_backup_file">Invalid backup file</string>
+    <string name="backup_import">Import</string>
+    <string name="backup_import_summary">Importing will overwrite the existing data.</string>
+    <string name="backup_importing">Importing…</string>
+    <string name="use_local_dns_as_direct_dns">Use Local DNS as Direct DNS</string>
+
+    <string name="tasker_settings">Tasker Settings</string>
+    <string name="tasker_action">Action</string>
+    <string name="tasker_action_start_service">Start service</string>
+    <string name="tasker_action_stop_service">Stop service</string>
+    <string name="tasker_start_current_profile">Current profile</string>
+    <string name="tasker_blurb_start_profile">Start profile %s</string>
+
+    <string name="root_ca_provider">Root CA Certificates Provider</string>
+    <string name="root_ca_mozilla">Mozilla</string>
+    <string name="root_ca_system">System</string>
+
+    <string name="packet_encoding">Packet Encoding</string>
+    <string name="mtu">MTU</string>
+    <string name="experimental_reduced_iv_head_entropy">This is GFWReport\'s proposal for a countermeasure for the random stream like protocol blocking behaviour observed on GFW.
+\n\nThis option remap the first 6 bytes of IV to printable characters, it\'s possible for anyone on the privileged network path to identify the protocol when enabled.</string>
+    <string name="auto_mtu">Auto MTU</string>
+    <string name="auto_mtu_summary">Use MTU of the upstream network interface</string>
+    <string name="acquire_wake_lock">Acquire WakeLock</string>
+    <string name="release_wake_lock">Release WakeLock</string>
+    <string name="acquire_wake_lock_summary">Keep the CPU on</string>
+    <string name="action_switch">Switch</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="sai">Split APKs Installer</string>
+    <string name="sai_succeed">Installation succeeded</string>
+    <string name="sai_error_generic">Installation failed</string>
+    <string name="sai_error_aborted">Installation was cancelled by user</string>
+    <string name="sai_error_blocked">Installation was blocked by %s</string>
+    <string name="sai_error_blocked_device">device</string>
+    <string name="sai_error_conflict">Unable to install the app because it conflicts with an already installed app with same package name</string>
+    <string name="sai_error_incompatible">Application is incompatible with this device</string>
+    <string name="sai_error_invalid">Invalid APKs</string>
+    <string name="sai_error_storage">Not enough storage space to install the app</string>
+    <string name="installer_provider">Installer Provider</string>
+    <string name="shizuku_unavailable">Shizuku unavailable</string>
+    <string name="udp_over_tcp">UDP Over TCP</string>
+    <string name="udp_over_tcp_summary">Enable the SUoT protocol, requires server support.</string>
+    <string name="without_brook_protocol">Without Brook Protocol</string>
+    <string name="grpc_mode">gRPC Mode</string>
+    <string name="tuic_token">Token</string>
+    <string name="tuic_udp_relay_mode">UDP Relay Mode</string>
+    <string name="tuic_congestion_controller">Congestion Controller</string>
+    <string name="tuic_disable_sni">Disable SNI</string>
+    <string name="tuic_reduce_rtt">Reduce RTT</string>
 
 </resources>

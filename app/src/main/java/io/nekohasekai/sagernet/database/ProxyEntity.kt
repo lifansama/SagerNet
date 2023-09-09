@@ -24,11 +24,15 @@ import android.content.Intent
 import android.os.Parcel
 import android.os.Parcelable
 import androidx.room.*
+import com.esotericsoftware.kryo.Kryo
+import com.esotericsoftware.kryo.io.ByteBufferInput
+import com.esotericsoftware.kryo.io.ByteBufferOutput
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.TrojanProvider
 import io.nekohasekai.sagernet.aidl.TrafficStats
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.KryoConverters
+import io.nekohasekai.sagernet.fmt.Serializable
 import io.nekohasekai.sagernet.fmt.brook.BrookBean
 import io.nekohasekai.sagernet.fmt.buildV2RayConfig
 import io.nekohasekai.sagernet.fmt.http.HttpBean
@@ -38,7 +42,8 @@ import io.nekohasekai.sagernet.fmt.hysteria.buildHysteriaConfig
 import io.nekohasekai.sagernet.fmt.internal.BalancerBean
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.fmt.internal.ConfigBean
-import io.nekohasekai.sagernet.fmt.internal.InternalBean
+import io.nekohasekai.sagernet.fmt.mieru.MieruBean
+import io.nekohasekai.sagernet.fmt.mieru.buildMieruConfig
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
 import io.nekohasekai.sagernet.fmt.naive.buildNaiveConfig
 import io.nekohasekai.sagernet.fmt.naive.toUri
@@ -47,10 +52,8 @@ import io.nekohasekai.sagernet.fmt.pingtunnel.toUri
 import io.nekohasekai.sagernet.fmt.relaybaton.RelayBatonBean
 import io.nekohasekai.sagernet.fmt.relaybaton.buildRelayBatonConfig
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
-import io.nekohasekai.sagernet.fmt.shadowsocks.buildShadowsocksConfig
 import io.nekohasekai.sagernet.fmt.shadowsocks.toUri
 import io.nekohasekai.sagernet.fmt.shadowsocksr.ShadowsocksRBean
-import io.nekohasekai.sagernet.fmt.shadowsocksr.buildShadowsocksRConfig
 import io.nekohasekai.sagernet.fmt.shadowsocksr.toUri
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import io.nekohasekai.sagernet.fmt.socks.toUri
@@ -61,11 +64,14 @@ import io.nekohasekai.sagernet.fmt.trojan.toUri
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
 import io.nekohasekai.sagernet.fmt.trojan_go.buildTrojanGoConfig
 import io.nekohasekai.sagernet.fmt.trojan_go.toUri
+import io.nekohasekai.sagernet.fmt.tuic.TuicBean
+import io.nekohasekai.sagernet.fmt.tuic.buildTuicConfig
 import io.nekohasekai.sagernet.fmt.v2ray.StandardV2RayBean
 import io.nekohasekai.sagernet.fmt.v2ray.VLESSBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.fmt.v2ray.toUri
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
+import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
 import io.nekohasekai.sagernet.ui.profile.*
@@ -97,12 +103,14 @@ data class ProxyEntity(
     var rbBean: RelayBatonBean? = null,
     var brookBean: BrookBean? = null,
     var hysteriaBean: HysteriaBean? = null,
+    var mieruBean: MieruBean? = null,
+    var tuicBean: TuicBean? = null,
     var sshBean: SSHBean? = null,
     var wgBean: WireGuardBean? = null,
     var configBean: ConfigBean? = null,
     var chainBean: ChainBean? = null,
     var balancerBean: BalancerBean? = null
-) : Parcelable {
+) : Serializable() {
 
     companion object {
         const val TYPE_SOCKS = 0
@@ -121,6 +129,8 @@ data class ProxyEntity(
         const val TYPE_SNELL = 16
         const val TYPE_SSH = 17
         const val TYPE_WG = 18
+        const val TYPE_MIERU = 19
+        const val TYPE_TUIC = 20
 
         const val TYPE_CHAIN = 8
         const val TYPE_BALANCER = 14
@@ -133,9 +143,10 @@ data class ProxyEntity(
         private val placeHolderBean = SOCKSBean().applyDefaultValues()
 
         @JvmField
-        val CREATOR = object : Parcelable.Creator<ProxyEntity> {
-            override fun createFromParcel(parcel: Parcel): ProxyEntity {
-                return ProxyEntity(parcel)
+        val CREATOR = object : Serializable.CREATOR<ProxyEntity>() {
+
+            override fun newInstance(): ProxyEntity {
+                return ProxyEntity()
             }
 
             override fun newArray(size: Int): Array<ProxyEntity?> {
@@ -152,19 +163,48 @@ data class ProxyEntity(
     @Transient
     var stats: TrafficStats? = null
 
-    constructor(parcel: Parcel) : this(
-        parcel.readLong(),
-        parcel.readLong(),
-        parcel.readInt(),
-        parcel.readLong(),
-        parcel.readLong(),
-        parcel.readLong()
-    ) {
-        dirty = parcel.readByte() > 0
-        val byteArray = ByteArray(parcel.readInt())
-        parcel.readByteArray(byteArray)
-        putByteArray(byteArray)
+    override fun initializeDefaultValues() {
     }
+
+    override fun serializeToBuffer(output: ByteBufferOutput) {
+        output.writeInt(0)
+
+        output.writeLong(id)
+        output.writeLong(groupId)
+        output.writeInt(type)
+        output.writeLong(userOrder)
+        output.writeLong(tx)
+        output.writeLong(rx)
+        output.writeInt(status)
+        output.writeInt(ping)
+        output.writeString(uuid)
+        output.writeString(error)
+
+        val data = KryoConverters.serialize(requireBean())
+        output.writeVarInt(data.size, true)
+        output.writeBytes(data)
+
+        output.writeBoolean(dirty)
+    }
+
+    override fun deserializeFromBuffer(input: ByteBufferInput) {
+        val version = input.readInt()
+
+        id = input.readLong()
+        groupId = input.readLong()
+        type = input.readInt()
+        userOrder = input.readLong()
+        tx = input.readLong()
+        rx = input.readLong()
+        status = input.readInt()
+        ping = input.readInt()
+        uuid = input.readString()
+        error = input.readString()
+        putByteArray(input.readBytes(input.readVarInt(true)))
+
+        dirty = input.readBoolean()
+    }
+
 
     fun putByteArray(byteArray: ByteArray) {
         when (type) {
@@ -183,24 +223,13 @@ data class ProxyEntity(
             TYPE_HYSTERIA -> hysteriaBean = KryoConverters.hysteriaDeserialize(byteArray)
             TYPE_SSH -> sshBean = KryoConverters.sshDeserialize(byteArray)
             TYPE_WG -> wgBean = KryoConverters.wireguardDeserialize(byteArray)
+            TYPE_MIERU -> mieruBean = KryoConverters.mieruDeserialize(byteArray)
+            TYPE_TUIC -> tuicBean = KryoConverters.tuicDeserialize(byteArray)
 
             TYPE_CONFIG -> configBean = KryoConverters.configDeserialize(byteArray)
             TYPE_CHAIN -> chainBean = KryoConverters.chainDeserialize(byteArray)
             TYPE_BALANCER -> balancerBean = KryoConverters.balancerBeanDeserialize(byteArray)
         }
-    }
-
-    override fun writeToParcel(parcel: Parcel, flags: Int) {
-        parcel.writeLong(id)
-        parcel.writeLong(groupId)
-        parcel.writeInt(type)
-        parcel.writeLong(userOrder)
-        parcel.writeLong(tx)
-        parcel.writeLong(rx)
-        parcel.writeByte(if (dirty) 1 else 0)
-        val byteArray = KryoConverters.serialize(requireBean())
-        parcel.writeInt(byteArray.size)
-        parcel.writeByteArray(byteArray)
     }
 
     fun displayType() = when (type) {
@@ -220,6 +249,9 @@ data class ProxyEntity(
         TYPE_SNELL -> "Snell"
         TYPE_SSH -> "SSH"
         TYPE_WG -> "WireGuard"
+        TYPE_MIERU -> "Mieru"
+        TYPE_TUIC -> "TUIC"
+
         TYPE_CHAIN -> chainName
         TYPE_CONFIG -> configName
         TYPE_BALANCER -> balancerName
@@ -246,6 +278,8 @@ data class ProxyEntity(
             TYPE_HYSTERIA -> hysteriaBean
             TYPE_SSH -> sshBean
             TYPE_WG -> wgBean
+            TYPE_MIERU -> mieruBean
+            TYPE_TUIC -> tuicBean
 
             TYPE_CONFIG -> configBean
             TYPE_CHAIN -> chainBean
@@ -257,7 +291,6 @@ data class ProxyEntity(
     fun haveLink(): Boolean {
         return when (type) {
             TYPE_CHAIN -> false
-            TYPE_CONFIG -> false
             TYPE_BALANCER -> false
             else -> true
         }
@@ -265,7 +298,8 @@ data class ProxyEntity(
 
     fun haveStandardLink(): Boolean {
         return haveLink() && when (type) {
-            TYPE_RELAY_BATON, TYPE_BROOK, TYPE_HYSTERIA, TYPE_SSH, TYPE_WG -> false
+            TYPE_RELAY_BATON, TYPE_BROOK, TYPE_SSH, TYPE_WG, TYPE_HYSTERIA, TYPE_MIERU, TYPE_TUIC -> false
+            TYPE_CONFIG -> false
             else -> true
         }
     }
@@ -282,12 +316,15 @@ data class ProxyEntity(
             is TrojanGoBean -> toUri()
             is NaiveBean -> toUri()
             is PingTunnelBean -> toUri()
+
             is RelayBatonBean -> toUniversalLink()
             is BrookBean -> toUniversalLink()
             is ConfigBean -> toUniversalLink()
-            is HysteriaBean -> toUniversalLink()
             is SSHBean -> toUniversalLink()
             is WireGuardBean -> toUniversalLink()
+            is HysteriaBean -> toUniversalLink()
+            is MieruBean -> toUniversalLink()
+            is TuicBean -> toUniversalLink()
             else -> null
         }
     }
@@ -304,26 +341,47 @@ data class ProxyEntity(
                     name = "${displayName()}.txt"
                 }
 
+                val enableMux = DataStore.enableMux
                 for ((isBalancer, chain) in config.index) {
                     chain.entries.forEachIndexed { index, (port, profile) ->
                         val needChain = !isBalancer && index != chain.size - 1
-                        val needMux = index == 0 && DataStore.enableMux
+                        val needMux = enableMux && (isBalancer || index == chain.size - 1)
                         when (val bean = profile.requireBean()) {
                             is TrojanGoBean -> {
                                 append("\n\n")
-                                append(bean.buildTrojanGoConfig(port, needMux))
+                                append(bean.buildTrojanGoConfig(port, needMux).also {
+                                    Logs.d(it)
+                                })
                             }
                             is NaiveBean -> {
                                 append("\n\n")
-                                append(bean.buildNaiveConfig(port, needMux))
+                                append(bean.buildNaiveConfig(port).also {
+                                    Logs.d(it)
+                                })
                             }
                             is RelayBatonBean -> {
                                 append("\n\n")
-                                append(bean.buildRelayBatonConfig(port))
+                                append(bean.buildRelayBatonConfig(port).also {
+                                    Logs.d(it)
+                                })
                             }
                             is HysteriaBean -> {
                                 append("\n\n")
-                                append(bean.buildHysteriaConfig(port, null))
+                                append(bean.buildHysteriaConfig(port, null).also {
+                                    Logs.d(it)
+                                })
+                            }
+                            is MieruBean -> {
+                                append("\n\n")
+                                append(bean.buildMieruConfig(port).also {
+                                    Logs.d(it)
+                                })
+                            }
+                            is TuicBean -> {
+                                append("\n\n")
+                                append(bean.buildTuicConfig(port, null).also {
+                                    Logs.d(it)
+                                })
                             }
                         }
                     }
@@ -341,6 +399,17 @@ data class ProxyEntity(
             TYPE_HYSTERIA -> true
             TYPE_RELAY_BATON -> true
             TYPE_BROOK -> true
+            TYPE_MIERU -> true
+            TYPE_TUIC -> true
+
+            TYPE_CONFIG -> true
+            else -> false
+        }
+    }
+
+    fun needUoT(): Boolean {
+        return when (type) {
+            TYPE_NAIVE -> naiveBean!!.uot
             else -> false
         }
     }
@@ -378,6 +447,8 @@ data class ProxyEntity(
         hysteriaBean = null
         sshBean = null
         wgBean = null
+        mieruBean = null
+        tuicBean = null
 
         configBean = null
         chainBean = null
@@ -444,6 +515,15 @@ data class ProxyEntity(
                 type = TYPE_WG
                 wgBean = bean
             }
+            is MieruBean -> {
+                type = TYPE_MIERU
+                mieruBean = bean
+            }
+            is TuicBean -> {
+                type = TYPE_TUIC
+                tuicBean = bean
+            }
+
             is ConfigBean -> {
                 type = TYPE_CONFIG
                 configBean = bean
@@ -479,6 +559,8 @@ data class ProxyEntity(
                 TYPE_HYSTERIA -> HysteriaSettingsActivity::class.java
                 TYPE_SSH -> SSHSettingsActivity::class.java
                 TYPE_WG -> WireGuardSettingsActivity::class.java
+                TYPE_MIERU -> MieruSettingsActivity::class.java
+                TYPE_TUIC -> TuicSettingsActivity::class.java
 
                 TYPE_CONFIG -> ConfigSettingsActivity::class.java
                 TYPE_CHAIN -> ChainSettingsActivity::class.java
@@ -493,6 +575,9 @@ data class ProxyEntity(
 
     @androidx.room.Dao
     interface Dao {
+
+        @Query("select * from proxy_entities")
+        fun getAll(): List<ProxyEntity>
 
         @Query("SELECT id FROM proxy_entities WHERE groupId = :groupId ORDER BY userOrder")
         fun getIdsByGroup(groupId: Long): List<Long>
@@ -536,13 +621,18 @@ data class ProxyEntity(
         @Insert
         fun addProxy(proxy: ProxyEntity): Long
 
+        @Insert
+        fun insert(proxies: List<ProxyEntity>)
+
         @Query("DELETE FROM proxy_entities WHERE groupId = :groupId")
         fun deleteAll(groupId: Long): Int
+
+        @Query("DELETE FROM proxy_entities")
+        fun reset()
 
     }
 
     override fun describeContents(): Int {
         return 0
     }
-
 }

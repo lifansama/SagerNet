@@ -5,6 +5,8 @@
 /.idea/modules.xml
 /.idea/workspace.xml
 /.idea/navEditor.xml
+/.idea/gradle.xml
+/.idea/misc.xml
 /.idea/assetWizardSettings.xml
 .DS_Store
 build/
@@ -13,6 +15,8 @@ build/
 .cxx
 local.properties
 /app/libs/
-/app/src/main/assets/v2ray
+/app/src/main/assets/v2ray/
+/app/src/main/assets/mozilla_included.pem
+/app/src/main/assets/mozilla_included.pem.sha256sum
 /service_account_credentials.json
 jniLibs/

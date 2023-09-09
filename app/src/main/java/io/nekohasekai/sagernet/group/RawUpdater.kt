@@ -41,9 +41,7 @@ import io.nekohasekai.sagernet.fmt.v2ray.VLESSBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import io.nekohasekai.sagernet.ktx.*
-import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.OkHttpClient
-import okhttp3.Request
+import libcore.Libcore
 import org.ini4j.Ini
 import org.yaml.snakeyaml.TypeDescription
 import org.yaml.snakeyaml.Yaml
@@ -57,7 +55,6 @@ object RawUpdater : GroupUpdater() {
         proxyGroup: ProxyGroup,
         subscription: SubscriptionBean,
         userInterface: GroupManager.Interface?,
-        httpClient: OkHttpClient,
         byUser: Boolean
     ) {
 
@@ -72,18 +69,18 @@ object RawUpdater : GroupUpdater() {
                 ?: error(app.getString(R.string.no_proxies_found_in_subscription))
         } else {
 
-            val response = httpClient.newCall(Request.Builder()
-                .url(subscription.link.toHttpUrl())
-                .header("User-Agent",
-                    subscription.customUserAgent.takeIf { it.isNotBlank() }
-                        ?: USER_AGENT)
-                .build()).execute().apply {
-                if (!isSuccessful) error("ERROR: HTTP $code\n\n${body?.string() ?: ""}")
-                if (body == null) error("ERROR: Empty response")
-            }
+            val response = Libcore.newHttpClient().apply {
+                trySocks5(DataStore.socksPort)
+            }.newRequest().apply {
+                setURL(subscription.link)
+                if (subscription.customUserAgent.isNotBlank()) {
+                    setUserAgent(subscription.customUserAgent)
+                } else {
+                    randomUserAgent()
+                }
+            }.execute()
 
-            Logs.d(response.toString())
-            proxies = parseRaw(response.body!!.string())
+            proxies = parseRaw(response.contentString)
                 ?: error(app.getString(R.string.no_proxies_found))
 
         }
@@ -103,11 +100,7 @@ object RawUpdater : GroupUpdater() {
         }
         proxies = proxiesMap.values.toList()
 
-        if (subscription.forceResolve) forceResolve(httpClient, proxies, proxyGroup.id)
-
-        if (subscription.forceVMessAEAD) {
-            proxies.filterIsInstance<VMessBean>().forEach { it.alterId = 0 }
-        }
+        if (subscription.forceResolve) forceResolve(proxies, proxyGroup.id)
 
         val exists = SagerDatabase.proxyDao.getByGroup(proxyGroup.id)
         val duplicate = ArrayList<String>()
@@ -237,45 +230,69 @@ object RawUpdater : GroupUpdater() {
                 }.loadAs(text, Map::class.java)["proxies"] as? (List<Map<String, Any?>>) ?: error(
                     app.getString(R.string.no_proxies_found_in_file)
                 ))) {
+                    // Note: YAML numbers parsed as "Long"
 
                     when (proxy["type"] as String) {
                         "socks5" -> {
                             proxies.add(SOCKSBean().apply {
                                 serverAddress = proxy["server"] as String
                                 serverPort = proxy["port"].toString().toInt()
-                                username = proxy["username"] as String?
-                                password = proxy["password"] as String?
+                                username = proxy["username"]?.toString()
+                                password = proxy["password"]?.toString()
                                 tls = proxy["tls"]?.toString() == "true"
-                                sni = proxy["sni"] as String?
-                                name = proxy["name"] as String?
+                                sni = proxy["sni"]?.toString()
+                                name = proxy["name"]?.toString()
                             })
                         }
                         "http" -> {
                             proxies.add(HttpBean().apply {
                                 serverAddress = proxy["server"] as String
                                 serverPort = proxy["port"].toString().toInt()
-                                username = proxy["username"] as String?
-                                password = proxy["password"] as String?
+                                username = proxy["username"]?.toString()
+                                password = proxy["password"]?.toString()
                                 tls = proxy["tls"]?.toString() == "true"
-                                sni = proxy["sni"] as String?
-                                name = proxy["name"] as String?
+                                sni = proxy["sni"]?.toString()
+                                name = proxy["name"]?.toString()
                             })
                         }
                         "ss" -> {
                             var pluginStr = ""
                             if (proxy.contains("plugin")) {
-                                val opts = PluginOptions()
-                                opts.id = proxy["plugin"] as String
-                                opts.putAll(proxy["plugin-opts"] as Map<String, String?>)
-                                pluginStr = opts.toString(false)
+                                val opts = proxy["plugin-opts"] as Map<String, Any?>
+                                val pluginOpts = PluginOptions()
+                                fun put(clash: String, origin: String = clash) {
+                                    opts[clash]?.let {
+                                        pluginOpts[origin] = it.toString()
+                                    }
+                                }
+                                when (proxy["plugin"]) {
+                                    "obfs" -> {
+                                        pluginOpts.id = "obfs-local"
+                                        put("mode", "obfs")
+                                        put("host", "obfs-host")
+                                    }
+                                    "v2ray-plugin" -> {
+                                        pluginOpts.id = "v2ray-plugin"
+                                        put("mode")
+                                        if (opts["tls"]?.toString() == "true") {
+                                            pluginOpts["tls"] = null
+                                        }
+                                        put("host")
+                                        put("path")
+                                        if (opts["mux"]?.toString() == "true") {
+                                            pluginOpts["mux"] = "8"
+                                        }
+                                    }
+                                }
+                                pluginStr = pluginOpts.toString(false)
                             }
                             proxies.add(ShadowsocksBean().apply {
                                 serverAddress = proxy["server"] as String
                                 serverPort = proxy["port"].toString().toInt()
-                                password = proxy["password"] as String
-                                method = proxy["cipher"] as String
+                                password = proxy["password"]?.toString()
+                                method = clashCipher(proxy["cipher"] as String)
                                 plugin = pluginStr
-                                name = proxy["name"] as String?
+                                name = proxy["name"]?.toString()
 
                                 fixInvalidParams()
                             })
@@ -284,36 +301,38 @@ object RawUpdater : GroupUpdater() {
                             val bean = VMessBean()
                             for (opt in proxy) {
                                 when (opt.key) {
-                                    "name" -> bean.name = opt.value as String
+                                    "name" -> bean.name = opt.value?.toString()
                                     "server" -> bean.serverAddress = opt.value as String
                                     "port" -> bean.serverPort = opt.value.toString().toInt()
                                     "uuid" -> bean.uuid = opt.value as String
-                                    "alterId" -> bean.alterId = opt.value.toString().toInt()
+//                                    "alterId" -> bean.alterId = opt.value.toString().toInt()
                                     "cipher" -> bean.encryption = opt.value as String
                                     "network" -> bean.type = opt.value as String
                                     "tls" -> bean.security = if (opt.value?.toString() == "true") "tls" else ""
-                                    "skip-cert-verify" -> bean.allowInsecure = opt.value == "true"
-                                    "ws-path" -> bean.path = opt.value as String
-                                    "ws-headers" -> for (wsHeader in (opt.value as Map<String, Any>)) {
-                                        when (wsHeader.key.lowercase()) {
-                                            "host" -> bean.host = wsHeader.value as String
-                                        }
-                                    }
+                                    "skip-cert-verify" -> bean.allowInsecure = opt.value?.toString() == "true"
                                     "ws-opts" -> for (wsOpt in (opt.value as Map<String, Any>)) {
                                         when (wsOpt.key.lowercase()) {
+                                            "headers" -> for (wsHeader in (opt.value as Map<String, Any>)) {
+                                                when (wsHeader.key.lowercase()) {
+                                                    "host" -> bean.host = wsHeader.value as String
+                                                }
+                                            }
+                                            "path" -> {
+                                                bean.path = wsOpt.value.toString()
+                                            }
                                             "max-early-data" -> {
                                                 bean.wsMaxEarlyData = wsOpt.value.toString().toInt()
                                             }
                                             "early-data-header-name" -> {
-                                                bean.earlyDataHeaderName = wsOpt.value as String
+                                                bean.earlyDataHeaderName = wsOpt.value.toString()
                                             }
                                         }
                                     }
-                                    "servername" -> bean.host = opt.value as String
+                                    "servername" -> bean.host = opt.value?.toString()
                                     "h2-opts" -> for (h2Opt in (opt.value as Map<String, Any>)) {
                                         when (h2Opt.key.lowercase()) {
                                             "host" -> bean.host = (h2Opt.value as List<String>).first()
-                                            "path" -> bean.path = h2Opt.value as String
+                                            "path" -> bean.path = h2Opt.value.toString()
                                         }
                                     }
                                     "http-opts" -> for (httpOpt in (opt.value as Map<String, Any>)) {
@@ -323,7 +342,7 @@ object RawUpdater : GroupUpdater() {
                                     }
                                     "grpc-opts" -> for (grpcOpt in (opt.value as Map<String, Any>)) {
                                         when (grpcOpt.key.lowercase()) {
-                                            "grpc-service-name" -> bean.path = grpcOpt.value as String
+                                            "grpc-service-name" -> bean.grpcServiceName = grpcOpt.value.toString()
                                         }
                                     }
                                 }
@@ -334,12 +353,12 @@ object RawUpdater : GroupUpdater() {
                             val bean = TrojanBean()
                             for (opt in proxy) {
                                 when (opt.key) {
-                                    "name" -> bean.name = opt.value as String?
+                                    "name" -> bean.name = opt.value?.toString()
                                     "server" -> bean.serverAddress = opt.value as String
                                     "port" -> bean.serverPort = opt.value.toString().toInt()
-                                    "password" -> bean.password = opt.value as String
-                                    "sni" -> bean.sni = opt.value as String?
-                                    "skip-cert-verify" -> bean.allowInsecure = opt.value == "true"
+                                    "password" -> bean.password = opt.value?.toString()
+                                    "sni" -> bean.sni = opt.value?.toString()
+                                    "skip-cert-verify" -> bean.allowInsecure = opt.value?.toString() == "true"
                                 }
                             }
                             proxies.add(bean)
@@ -349,15 +368,15 @@ object RawUpdater : GroupUpdater() {
                             val entity = ShadowsocksRBean()
                             for (opt in proxy) {
                                 when (opt.key) {
-                                    "name" -> entity.name = opt.value as String
+                                    "name" -> entity.name = opt.value?.toString()
                                     "server" -> entity.serverAddress = opt.value as String
                                     "port" -> entity.serverPort = opt.value.toString().toInt()
-                                    "cipher" -> entity.method = opt.value as String
-                                    "password" -> entity.password = opt.value as String
+                                    "cipher" -> entity.method = clashCipher(opt.value as String)
+                                    "password" -> entity.password = opt.value?.toString()
                                     "obfs" -> entity.obfs = opt.value as String
                                     "protocol" -> entity.protocol = opt.value as String
-                                    "obfs-param" -> entity.obfsParam = opt.value as String
-                                    "protocol-param" -> entity.protocolParam = opt.value as String
+                                    "obfs-param" -> entity.obfsParam = opt.value?.toString()
+                                    "protocol-param" -> entity.protocolParam = opt.value?.toString()
                                 }
                             }
                             proxies.add(entity)
@@ -402,6 +421,13 @@ object RawUpdater : GroupUpdater() {
         return null
     }
 
+    fun clashCipher(cipher: String): String {
+        return when (cipher) {
+            "dummy" -> "none"
+            else -> cipher
+        }
+    }
+
     fun parseWireGuard(conf: String): List<WireGuardBean> {
         val ini = Ini(StringReader(conf))
         val iface = ini["Interface"] ?: error("Missing 'Interface' selection")
@@ -437,6 +463,9 @@ object RawUpdater : GroupUpdater() {
 
         if (json is JSONObject) {
             when {
+                json.containsKey("up_mbps") -> {
+                    return listOf(json.parseHysteria())
+                }
                 json.containsKey("protocol_param") -> {
                     return listOf(json.parseShadowsocksR())
                 }
@@ -499,10 +528,7 @@ object RawUpdater : GroupUpdater() {
                 json.containsKey("remote_addr") -> {
                     return listOf(json.parseTrojanGo())
                 }
-                json.containsKey("up_mbps") -> {
-                    return listOf(json.parseHysteria())
-                }
-                else -> json.forEach { _, it ->
+                else -> json.forEach { (_, it) ->
                     if (it is JSON) {
                         proxies.addAll(parseJSON(it))
                     }
@@ -701,7 +727,7 @@ object RawUpdater : GroupUpdater() {
                                 proxies.add(vmessBean.clone().apply {
                                     uuid = user.id
                                     encryption = user.security
-                                    alterId = user.alterId
+//                                    alterId = user.alterId
                                     name = tag ?: displayName() + " - ${user.security} - ${user.id}"
                                 })
                             }

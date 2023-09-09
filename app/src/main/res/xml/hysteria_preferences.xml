@@ -36,10 +36,23 @@
             app:icon="@drawable/ic_settings_password"
             app:key="serverPassword"
             app:title="@string/hysteria_auth_payload" />
+        <com.takisoft.preferencex.SimpleMenuPreference
+            app:defaultValue="https"
+            app:entries="@array/hysteria_protocol"
+            app:entryValues="@array/int_array_3"
+            app:icon="@drawable/ic_baseline_layers_24"
+            app:key="serverProtocol"
+            app:title="@string/protocol"
+            app:useSimpleSummaryProvider="true" />
         <EditTextPreference
             app:icon="@drawable/ic_action_copyright"
             app:key="serverSNI"
             app:title="@string/sni"
+            app:useSimpleSummaryProvider="true" />
+        <EditTextPreference
+            app:icon="@drawable/ic_baseline_legend_toggle_24"
+            app:key="serverALPN"
+            app:title="@string/alpn"
             app:useSimpleSummaryProvider="true" />
         <EditTextPreference
             app:icon="@drawable/ic_baseline_vpn_key_24"

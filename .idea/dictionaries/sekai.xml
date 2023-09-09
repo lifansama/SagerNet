@@ -20,6 +20,7 @@
       <w>libnaive</w>
       <w>libtrojan</w>
       <w>loyalsoldier</w>
+      <w>mieru</w>
       <w>naiveproxy</w>
       <w>nativeproxy</w>
       <w>naïve</w>
@@ -33,15 +34,18 @@
       <w>sagernet</w>
       <w>shadowsocks</w>
       <w>shadowsocksr</w>
+      <w>shizuku</w>
       <w>snackbar</w>
       <w>thiz</w>
       <w>tproxy</w>
       <w>transproxy</w>
+      <w>tuic</w>
       <w>uplink</w>
       <w>utls</w>
       <w>vless</w>
       <w>vmess</w>
       <w>websocket</w>
+      <w>wireguard</w>
       <w>xray</w>
       <w>xtls</w>
     </words>

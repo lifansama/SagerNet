@@ -64,7 +64,6 @@ class GroupSettingsActivity(
         DataStore.subscriptionToken = subscription.token
         DataStore.subscriptionForceResolve = subscription.forceResolve
         DataStore.subscriptionDeduplication = subscription.deduplication
-        DataStore.subscriptionForceVMessAEAD = subscription.forceVMessAEAD
         DataStore.subscriptionUpdateWhenConnectedOnly = subscription.updateWhenConnectedOnly
         DataStore.subscriptionUserAgent = subscription.customUserAgent
         DataStore.subscriptionAutoUpdate = subscription.autoUpdate
@@ -85,7 +84,6 @@ class GroupSettingsActivity(
                 token = DataStore.subscriptionToken
                 forceResolve = DataStore.subscriptionForceResolve
                 deduplication = DataStore.subscriptionDeduplication
-                forceVMessAEAD = DataStore.subscriptionForceVMessAEAD
                 updateWhenConnectedOnly = DataStore.subscriptionUpdateWhenConnectedOnly
                 customUserAgent = DataStore.subscriptionUserAgent
                 autoUpdate = DataStore.subscriptionAutoUpdate
@@ -123,14 +121,12 @@ class GroupSettingsActivity(
         val subscriptionType = findPreference<SimpleMenuPreference>(Key.SUBSCRIPTION_TYPE)!!
         val subscriptionLink = findPreference<EditTextPreference>(Key.SUBSCRIPTION_LINK)!!
         val subscriptionToken = findPreference<EditTextPreference>(Key.SUBSCRIPTION_TOKEN)!!
-        val subscriptionForceVMessAEAD = findPreference<SwitchPreference>(Key.SUBSCRIPTION_FORCE_VMESS_AEAD)!!
         val subscriptionUserAgent = findPreference<UserAgentPreference>(Key.SUBSCRIPTION_USER_AGENT)!!
 
         fun updateSubscriptionType(subscriptionType: Int = DataStore.subscriptionType) {
             val isRaw = subscriptionType == SubscriptionType.RAW
             val isOOCv1 = subscriptionType == SubscriptionType.OOCv1
 
-            subscriptionForceVMessAEAD.isVisible = isRaw
             subscriptionLink.isVisible = !isOOCv1
             subscriptionToken.isVisible = isOOCv1
             subscriptionUserAgent.isOOCv1 = isOOCv1
@@ -341,10 +337,11 @@ class GroupSettingsActivity(
     object PasswordSummaryProvider : Preference.SummaryProvider<EditTextPreference> {
 
         override fun provideSummary(preference: EditTextPreference): CharSequence {
-            return if (preference.text.isNullOrBlank()) {
+            val text = preference.text
+            return if (text.isNullOrBlank()) {
                 preference.context.getString(androidx.preference.R.string.not_set)
             } else {
-                "\u2022".repeat(preference.text.length)
+                "\u2022".repeat(text.length)
             }
         }
 

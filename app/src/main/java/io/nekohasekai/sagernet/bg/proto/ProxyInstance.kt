@@ -19,41 +19,35 @@
 
 package io.nekohasekai.sagernet.bg.proto
 
-import io.nekohasekai.sagernet.BuildConfig
-import io.nekohasekai.sagernet.bg.test.DebugInstance
 import cn.hutool.core.util.NumberUtil
 import com.v2ray.core.app.observatory.OutboundStatus
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.BaseService
-import io.nekohasekai.sagernet.bg.VpnService
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
-import io.nekohasekai.sagernet.ktx.isExpert
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.utils.DirectBoot
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import libcore.ErrorHandler
 import libcore.Libcore
+import libcore.ObservatoryStatusUpdateListener
 import java.io.IOException
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.timerTask
 
 class ProxyInstance(profile: ProxyEntity, val service: BaseService.Interface) : V2RayInstance(
     profile
-) {
+),
+    ObservatoryStatusUpdateListener,
+    ErrorHandler by service {
 
     lateinit var observatoryJob: Job
 
     override fun init() {
-        if (service is VpnService) {
-            Libcore.setProtector { service.protect(it) }
-            Libcore.setIPv6Mode(DataStore.ipv6Mode)
-        } else {
-            Libcore.setProtector { true }
-        }
-
         super.init()
 
         Logs.d(config.config)
@@ -67,7 +61,7 @@ class ProxyInstance(profile: ProxyEntity, val service: BaseService.Interface) : 
         super.launch()
 
         if (config.observerTag.isNotBlank()) {
-            v2rayPoint.setStatusUpdateListener(config.observerTag, ::sendObservatoryResult)
+            v2rayPoint.setStatusUpdateListener(config.observerTag, this)
             observatoryJob = runOnDefaultDispatcher {
                 sendInitStatuses()
             }
@@ -83,12 +77,7 @@ class ProxyInstance(profile: ProxyEntity, val service: BaseService.Interface) : 
             }
         }
 
-         if (BuildConfig.DEBUG) {
-             externalInstances[8964] = DebugInstance().apply {
-                 launch()
-             }
-         }
-
+        Libcore.setCurrentDomainNameSystemQueryInstance(v2rayPoint)
         SagerNet.started = true
     }
 
@@ -120,10 +109,11 @@ class ProxyInstance(profile: ProxyEntity, val service: BaseService.Interface) : 
         }
     }
 
-    val updateTimer by lazy { Timer("Observatory Timer") }
-    val updateTasks by lazy { hashMapOf<Long, TimerTask>() }
+    val updateTimer = lazy { Timer("Observatory Timer") }
+    val updateTasks by lazy { ConcurrentHashMap<Long, TimerTask>() }
 
-    fun sendObservatoryResult(statusPb: ByteArray?) {
+    @Throws(Exception::class)
+    override fun onUpdateObservatoryStatus(statusPb: ByteArray?) {
         if (statusPb == null || statusPb.isEmpty()) {
             return
         }
@@ -154,18 +144,18 @@ class ProxyInstance(profile: ProxyEntity, val service: BaseService.Interface) : 
                     Logs.d("Send result for #$profileId ${profile.displayName()}")
 
                     val groupId = profile.groupId
-                    updateTasks.put(groupId, timerTask {
-                        synchronized(this@ProxyInstance) {
-                            if (updateTasks[groupId] == this) {
+                    val task = timerTask {
+                        if (updateTasks[groupId] == this) {
+                            runOnDefaultDispatcher {
                                 service.data.binder.broadcast {
-                                    it.observatoryResultsUpdated(profile.groupId)
+                                    it.observatoryResultsUpdated(groupId)
                                 }
-                                updateTasks.remove(profile.groupId)
                             }
+                            updateTasks.remove(groupId)
                         }
-                    }.also {
-                        updateTimer.schedule(it, 2333L)
-                    })?.cancel()
+                    }
+                    updateTimer.value.schedule(task, 2000L)
+                    updateTasks.put(groupId, task)?.cancel()
                 }
             } else {
                 Logs.d("Profile with id #$profileId not found")
@@ -176,15 +166,17 @@ class ProxyInstance(profile: ProxyEntity, val service: BaseService.Interface) : 
     }
 
     override fun close() {
+        Libcore.setCurrentDomainNameSystemQueryInstance(null)
         SagerNet.started = false
 
         persistStats()
         super.close()
 
+        if (updateTimer.isInitialized()) updateTimer.value.cancel()
         if (::observatoryJob.isInitialized) observatoryJob.cancel()
     }
 
-    // ------------- stats -------------
+// ------------- stats -------------
 
     private suspend fun queryStats(tag: String, direct: String): Long {
         return v2rayPoint.queryStats(tag, direct)

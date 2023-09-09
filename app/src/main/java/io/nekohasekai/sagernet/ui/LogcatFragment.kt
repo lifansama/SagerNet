@@ -21,6 +21,7 @@ package io.nekohasekai.sagernet.ui
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.view.*
 import androidx.appcompat.widget.Toolbar
@@ -93,27 +94,42 @@ class LogcatFragment : ToolbarFragment(R.layout.layout_logcat),
         terminalView.mTermSession?.also {
             it.finishIfRunning()
         }
-        val session = TerminalSession(
-            "/system/bin/logcat", app.cacheDir.absolutePath, arrayOf(
-                "-C",
+        val args = mutableListOf("-C")
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            args += arrayOf(
                 "-v",
                 "tag,color",
+            )
+        }
+
+        if (!isExpert) {
+            args += arrayOf(
                 "AndroidRuntime:D",
                 "ProxyInstance:D",
                 "GuardedProcessPool:D",
                 "VpnService:D",
                 "libcore:D",
                 "v2ray-core:D",
-
+                "su:D",
                 "libtrojan:D",
                 "libnaive:D",
                 "libbrook:D",
                 "libhysteria:D",
-                "libpingtunnel:D",
                 "librelaybaton:D",
+                "libmieru:D",
+                "libtuic:D",
+                "*:S",
+            )
+        }
 
-                "*:S"
-            ), arrayOf(), 3000, this
+        val session = TerminalSession(
+            "/system/bin/logcat",
+            app.cacheDir.absolutePath,
+            args.toTypedArray(),
+            arrayOf(),
+            3000,
+            this
         )
         terminalView.attachSession(session)
         terminalView.updateSize()
@@ -168,7 +184,7 @@ class LogcatFragment : ToolbarFragment(R.layout.layout_logcat),
                                 .setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                                 .putExtra(
                                     Intent.EXTRA_STREAM, FileProvider.getUriForFile(
-                                        context, BuildConfig.APPLICATION_ID + ".log", logFile
+                                        context, BuildConfig.APPLICATION_ID + ".cache", logFile
                                     )
                                 ), context.getString(R.string.abc_shareactionprovider_share_with)
                         )

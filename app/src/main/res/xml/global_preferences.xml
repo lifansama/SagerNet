@@ -8,11 +8,16 @@
             app:key="isAutoConnect"
             app:summary="@string/auto_connect_summary"
             app:title="@string/auto_connect" />
-        <SwitchPreference
+        <!--<SwitchPreference
             app:icon="@drawable/ic_action_lock"
             app:key="directBootAware"
             app:summary="@string/direct_boot_aware_summary"
-            app:title="@string/direct_boot_aware" />
+            app:title="@string/direct_boot_aware" />-->
+        <SwitchPreference
+            app:icon="@drawable/baseline_developer_board_24"
+            app:key="acquireWakeLock"
+            app:summary="@string/acquire_wake_lock_summary"
+            app:title="@string/acquire_wake_lock" />
         <io.nekohasekai.sagernet.widget.ColorPickerPreference
             android:title="@string/theme"
             app:icon="@drawable/ic_baseline_color_lens_24"
@@ -34,12 +39,23 @@
             app:title="@string/service_mode"
             app:useSimpleSummaryProvider="true" />
         <com.takisoft.preferencex.SimpleMenuPreference
-            app:defaultValue="0"
+            app:defaultValue="1"
             app:entries="@array/tun_implementation"
             app:entryValues="@array/int_array_2"
             app:icon="@drawable/ic_baseline_flip_camera_android_24"
             app:key="tunImplementation"
             app:title="@string/tun_implementation"
+            app:useSimpleSummaryProvider="true" />
+        <SwitchPreference
+            app:defaultValue="true"
+            app:icon="@drawable/ic_hardware_router"
+            app:key="useUpstreamInterfaceMTU"
+            app:summary="@string/auto_mtu_summary"
+            app:title="@string/auto_mtu" />
+        <EditTextPreference
+            app:icon="@drawable/baseline_public_24"
+            app:key="mtu"
+            app:title="@string/mtu"
             app:useSimpleSummaryProvider="true" />
         <SwitchPreference
             app:icon="@drawable/ic_baseline_manage_search_24"
@@ -81,11 +97,6 @@
             app:summary="@string/show_direct_speed_sum"
             app:title="@string/show_direct_speed"
             app:useSimpleSummaryProvider="true" />
-        <SwitchPreference
-            app:icon="@drawable/ic_baseline_multiple_stop_24"
-            app:key="showStopButton"
-            app:summary="@string/show_stop_sum"
-            app:title="@string/show_stop" />
         <SwitchPreference
             app:icon="@drawable/ic_baseline_nat_24"
             app:key="allowAccess"
@@ -155,37 +166,64 @@
 
     <PreferenceCategory app:title="@string/protocol_settings">
         <com.takisoft.preferencex.SimpleMenuPreference
+            android:icon="@drawable/baseline_flight_takeoff_24"
             app:defaultValue="0"
-            app:entries="@array/trojan_provider_experimental"
-            app:entryValues="@array/int_array_3"
+            app:entries="@array/trojan_provider"
+            app:entryValues="@array/trojan_provider_value"
             app:key="providerTrojan"
             app:title="@string/trojan_provider"
             app:useSimpleSummaryProvider="true" />
+        <com.takisoft.preferencex.SimpleMenuPreference
+            android:icon="@drawable/ic_baseline_push_pin_24"
+            app:defaultValue="0"
+            app:entries="@array/root_ca_provider_entry"
+            app:entryValues="@array/int_array_2"
+            app:key="providerRootCA"
+            app:title="@string/root_ca_provider"
+            app:useSimpleSummaryProvider="true" />
+<!--        <com.takisoft.preferencex.SimpleMenuPreference
+            android:icon="@drawable/baseline_construction_24"
+            app:defaultValue="0"
+            app:entries="@array/installer_provider_entry"
+            app:entryValues="@array/int_array_2"
+            app:key="providerInstaller"
+            app:title="@string/installer_provider"
+            app:useSimpleSummaryProvider="true" />-->
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/cag_dns">
-        <EditTextPreference
-            app:defaultValue="https://1.0.0.1/dns-query"
+        <io.nekohasekai.sagernet.widget.NonBlackEditTextPreference
+            app:defaultValue="tls://dns.google"
             app:icon="@drawable/ic_action_dns"
             app:key="remoteDns"
             app:title="@string/remote_dns"
             app:useSimpleSummaryProvider="true" />
-        <EditTextPreference
-            app:defaultValue="https+local://223.5.5.5/dns-query"
+        <SwitchPreference
+            app:defaultValue="true"
+            app:icon="@drawable/ic_baseline_home_24"
+            app:key="useLocalDnsAsDirectDns"
+            app:title="@string/use_local_dns_as_direct_dns" />
+        <io.nekohasekai.sagernet.widget.NonBlackEditTextPreference
+            app:defaultValue="tls+local://dot.pub"
             app:key="directDns"
             app:title="@string/direct_dns"
             app:useSimpleSummaryProvider="true" />
         <EditTextPreference
-            app:defaultValue="domain:googleapis.cn googleapis.com"
             app:icon="@drawable/ic_baseline_transform_24"
-            app:key="dnsHosts"
+            app:key="dnsHosts0"
             app:title="@string/dns_hosts"
             app:useSimpleSummaryProvider="true" />
         <SwitchPreference
+            app:defaultValue="true"
             app:icon="@drawable/ic_baseline_camera_24"
             app:key="enableDnsRouting"
             app:summary="@string/dns_routing_message"
             app:title="@string/enable_dns_routing" />
+        <SwitchPreference
+            app:icon="@drawable/ic_baseline_import_contacts_24"
+            app:key="disableDnsExpire"
+            app:summary="@string/disable_dns_expire_summary"
+            app:title="@string/disable_dns_expire" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/inbound_settings">
@@ -199,6 +237,7 @@
             app:title="@string/port_local_dns"
             app:useSimpleSummaryProvider="true" />
         <SwitchPreference
+            app:defaultValue="true"
             app:icon="@drawable/ic_baseline_http_24"
             app:key="requireHttp"
             app:title="@string/require_http" />
@@ -230,7 +269,7 @@
 
     <PreferenceCategory app:title="@string/cag_misc">
         <io.nekohasekai.sagernet.widget.LinkPreference
-            app:defaultValue="https://api.v2fly.org/checkConnection.svgz"
+            app:defaultValue="https://www.google.com/generate_204"
             app:icon="@drawable/ic_baseline_cast_connected_24"
             app:key="connectionTestURL"
             app:title="@string/connection_test_url"

@@ -32,6 +32,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.whenCreated
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
+import androidx.preference.SwitchPreference
 import com.github.shadowsocks.plugin.*
 import com.github.shadowsocks.plugin.fragment.AlertDialogFragment
 import com.github.shadowsocks.preference.PluginConfigurationDialogFragment
@@ -40,15 +41,14 @@ import com.github.shadowsocks.preference.PluginPreferenceDialogFragment
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.takisoft.preferencex.PreferenceFragmentCompat
+import com.takisoft.preferencex.SimpleMenuPreference
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
-import io.nekohasekai.sagernet.ktx.listenForPackageChanges
-import io.nekohasekai.sagernet.ktx.readableMessage
-import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
-import io.nekohasekai.sagernet.ktx.showAllowingStateLoss
+import io.nekohasekai.sagernet.fmt.shadowsocks.methodsSing
+import io.nekohasekai.sagernet.ktx.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -69,6 +69,9 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
         DataStore.serverMethod = method
         DataStore.serverPassword = password
         DataStore.serverPlugin = plugin
+        DataStore.serverUoT = uot
+        DataStore.serverReducedIvHeadEntropy = experimentReducedIvHeadEntropy
+        DataStore.serverEncryptedProtocolExtension = encryptedProtocolExtension
     }
 
     override fun ShadowsocksBean.serialize() {
@@ -78,7 +81,9 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
         method = DataStore.serverMethod
         password = DataStore.serverPassword
         plugin = DataStore.serverPlugin
-
+        uot = DataStore.serverUoT
+        experimentReducedIvHeadEntropy = DataStore.serverReducedIvHeadEntropy
+        encryptedProtocolExtension = DataStore.serverEncryptedProtocolExtension
     }
 
     override fun onAttachedToWindow() {
@@ -104,6 +109,14 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
             summaryProvider = PasswordSummaryProvider
         }
 
+        val serverMethod = findPreference<SimpleMenuPreference>(Key.SERVER_METHOD)!!
+        val serverEncryptedProtocolExtension = findPreference<SwitchPreference>(Key.SERVER_ENCRYPTED_PROTOCOL_EXTENSION)!!
+        serverMethod.setOnPreferenceChangeListener { _, newValue ->
+            serverEncryptedProtocolExtension.isVisible = (newValue as String) in methodsSing
+            true
+        }
+        serverEncryptedProtocolExtension.isVisible = serverMethod.value in methodsSing
+
         plugin = findPreference(Key.SERVER_PLUGIN)!!
         pluginConfigure = findPreference(Key.SERVER_PLUGIN_CONFIGURE)!!
         pluginConfigure.setOnBindEditTextListener(EditTextPreferenceModifiers.Monospace)
@@ -115,12 +128,14 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
     override fun PreferenceFragmentCompat.viewCreated(view: View, savedInstanceState: Bundle?) {
         setFragmentResultListener(PluginPreferenceDialogFragment::class.java.name) { _, bundle ->
             val selected = plugin.plugins.lookup.getValue(
-                bundle.getString(PluginPreferenceDialogFragment.KEY_SELECTED_ID)!!)
+                bundle.getString(PluginPreferenceDialogFragment.KEY_SELECTED_ID)!!
+            )
             val override = pluginConfiguration.pluginsOptions.keys.firstOrNull {
                 plugin.plugins.lookup[it] == selected
             }
-            pluginConfiguration =
-                PluginConfiguration(pluginConfiguration.pluginsOptions, override ?: selected.id)
+            pluginConfiguration = PluginConfiguration(
+                pluginConfiguration.pluginsOptions, override ?: selected.id
+            )
             DataStore.serverPlugin = pluginConfiguration.toString()
             DataStore.dirty = true
             plugin.value = pluginConfiguration.selected
@@ -130,8 +145,9 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
                 Snackbar.make(requireView(), R.string.plugin_untrusted, Snackbar.LENGTH_LONG).show()
             }
         }
-        AlertDialogFragment.setResultListener<Empty>(this,
-            UnsavedChangesDialogFragment::class.java.simpleName) { which, _ ->
+        AlertDialogFragment.setResultListener<Empty>(
+            this, UnsavedChangesDialogFragment::class.java.simpleName
+        ) { which, _ ->
             when (which) {
                 DialogInterface.BUTTON_POSITIVE -> {
                     runOnDefaultDispatcher {
@@ -157,12 +173,13 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
         }.showAllowingStateLoss(supportFragmentManager, Key.SERVER_PLUGIN_CONFIGURE)
     }
 
-    override fun onPreferenceChange(preference: Preference?, newValue: Any?): Boolean = try {
+    override fun onPreferenceChange(preference: Preference, newValue: Any?): Boolean = try {
         val selected = pluginConfiguration.selected
-        pluginConfiguration = PluginConfiguration((pluginConfiguration.pluginsOptions +
-                (pluginConfiguration.selected to PluginOptions(selected,
-                    newValue as? String?))).toMutableMap(),
-            selected)
+        pluginConfiguration = PluginConfiguration(
+            (pluginConfiguration.pluginsOptions + (pluginConfiguration.selected to PluginOptions(
+                selected, newValue as? String?
+            ))).toMutableMap(), selected
+        )
         DataStore.serverPlugin = pluginConfiguration.toString()
         DataStore.dirty = true
         true
@@ -171,17 +188,16 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
         false
     }
 
-    private val configurePlugin =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { (resultCode, data) ->
-            when (resultCode) {
-                Activity.RESULT_OK -> {
-                    val options = data?.getStringExtra(PluginContract.EXTRA_OPTIONS)
-                    pluginConfigure.text = options
-                    onPreferenceChange(null, options)
-                }
-                PluginContract.RESULT_FALLBACK -> showPluginEditor()
+    private val configurePlugin = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { (resultCode, data) ->
+        when (resultCode) {
+            Activity.RESULT_OK -> {
+                val options = data?.getStringExtra(PluginContract.EXTRA_OPTIONS)
+                pluginConfigure.text = options
+                onPreferenceChange(pluginConfigure, options)
             }
+            PluginContract.RESULT_FALLBACK -> showPluginEditor()
         }
+    }
 
     override fun PreferenceFragmentCompat.displayPreferenceDialog(preference: Preference): Boolean {
         when (preference.key) {
@@ -190,12 +206,16 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
                 setTargetFragment(child, 0)
             }.showAllowingStateLoss(supportFragmentManager, Key.SERVER_PLUGIN)
             Key.SERVER_PLUGIN_CONFIGURE -> {
-                val intent = PluginManager.buildIntent(plugin.selectedEntry!!.id,
-                    PluginContract.ACTION_CONFIGURE)
+                val intent = PluginManager.buildIntent(
+                    plugin.selectedEntry!!.id, PluginContract.ACTION_CONFIGURE
+                )
                 if (intent.resolveActivity(packageManager) == null) showPluginEditor() else {
-                    configurePlugin.launch(intent
-                        .putExtra(PluginContract.EXTRA_OPTIONS,
-                            pluginConfiguration.getOptions().toString()))
+                    configurePlugin.launch(
+                        intent.putExtra(
+                            PluginContract.EXTRA_OPTIONS,
+                            pluginConfiguration.getOptions().toString()
+                        )
+                    )
                 }
             }
             else -> return false
@@ -204,9 +224,9 @@ class ShadowsocksSettingsActivity : ProfileSettingsActivity<ShadowsocksBean>(),
     }
 
     val pluginHelp = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()) { (resultCode, data) ->
-        if (resultCode == Activity.RESULT_OK) MaterialAlertDialogBuilder(this)
-            .setTitle("?")
+        ActivityResultContracts.StartActivityForResult()
+    ) { (resultCode, data) ->
+        if (resultCode == Activity.RESULT_OK) MaterialAlertDialogBuilder(this).setTitle("?")
             .setMessage(data?.getCharSequenceExtra(PluginContract.EXTRA_HELP_MESSAGE))
             .show()
     }

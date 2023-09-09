@@ -28,13 +28,15 @@ import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.fmt.LOCALHOST
 import io.nekohasekai.sagernet.fmt.shadowsocks.fixInvalidParams
-import io.nekohasekai.sagernet.ktx.*
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import io.nekohasekai.sagernet.ktx.applyDefaultValues
+import io.nekohasekai.sagernet.ktx.isIpAddress
+import io.nekohasekai.sagernet.ktx.queryParameter
+import io.nekohasekai.sagernet.ktx.urlSafe
+import libcore.Libcore
 
 fun parseTrojanGo(server: String): TrojanGoBean {
-    val link = server.replace("trojan-go://", "https://").toHttpUrlOrNull() ?: error(
-        "invalid trojan-link link $server"
-    )
+    val link = Libcore.parseURL(server)
+
     return TrojanGoBean().apply {
         serverAddress = link.host
         serverPort = link.port
@@ -71,7 +73,11 @@ fun parseTrojanGo(server: String): TrojanGoBean {
 }
 
 fun TrojanGoBean.toUri(): String {
-    val builder = linkBuilder().username(password).host(serverAddress).port(serverPort)
+    val builder = Libcore.newURL("trojan-go")
+    builder.host = serverAddress
+    builder.port = serverPort
+    builder.username = password
+
     if (sni.isNotBlank()) {
         builder.addQueryParameter("sni", sni)
     }
@@ -97,10 +103,10 @@ fun TrojanGoBean.toUri(): String {
     }
 
     if (name.isNotBlank()) {
-        builder.encodedFragment(name.urlSafe())
+        builder.setRawFragment(name.urlSafe())
     }
 
-    return builder.toLink("trojan-go")
+    return builder.string
 }
 
 fun TrojanGoBean.buildTrojanGoConfig(port: Int, mux: Boolean): String {
@@ -138,6 +144,7 @@ fun TrojanGoBean.buildTrojanGoConfig(port: Int, mux: Boolean): String {
 
         conf["ssl"] = JSONObject().also {
             if (sni.isNotBlank()) it["sni"] = sni
+            if (allowInsecure) it["verify"] = false
         }
 
         when {
@@ -184,6 +191,7 @@ fun JSONObject.parseTrojanGo(): TrojanGoBean {
         }
         getJSONObject("ssl")?.apply {
             sni = getStr("sni", sni)
+            allowInsecure = getBool("verify", true)
         }
         getJSONObject("websocket")?.apply {
             if (getBool("enabled", false)) {

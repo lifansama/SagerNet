@@ -19,7 +19,7 @@
 
 package io.nekohasekai.sagernet
 
-const val CONNECTION_TEST_URL = "https://api.v2fly.org/checkConnection.svgz"
+const val CONNECTION_TEST_URL = "https://www.google.com/generate_204"
 
 object Key {
 
@@ -38,8 +38,10 @@ object Key {
 
     const val REMOTE_DNS = "remoteDns"
     const val DIRECT_DNS = "directDns"
+    const val USE_LOCAL_DNS_AS_DIRECT_DNS = "useLocalDnsAsDirectDns"
     const val ENABLE_DNS_ROUTING = "enableDnsRouting"
-    const val DNS_HOSTS = "dnsHosts"
+    const val DNS_HOSTS = "dnsHosts0"
+    const val DISABLE_DNS_EXPIRE = "disableDnsExpire"
 
     const val IPV6_MODE = "ipv6Mode"
 
@@ -77,7 +79,6 @@ object Key {
     const val ENABLE_MUX = "enableMux"
     const val ENABLE_MUX_FOR_ALL = "enableMuxForAll"
     const val MUX_CONCURRENCY = "muxConcurrency"
-    const val SHOW_STOP_BUTTON = "showStopButton"
     const val SECURITY_ADVISORY = "securityAdvisory"
     const val TCP_KEEP_ALIVE_INTERVAL = "tcpKeepAliveInterval"
     const val RULES_PROVIDER = "rulesProvider"
@@ -86,9 +87,14 @@ object Key {
     const val ALWAYS_SHOW_ADDRESS = "alwaysShowAddress"
 
     const val PROVIDER_TROJAN = "providerTrojan"
+    const val PROVIDER_ROOT_CA = "providerRootCA"
+    const val PROVIDER_INSTALLER = "providerInstaller"
 
     const val TUN_IMPLEMENTATION = "tunImplementation"
     const val ENABLE_PCAP = "enablePcap"
+    const val MTU = "mtu"
+    const val USE_UPSTREAM_INTERFACE_MTU = "useUpstreamInterfaceMTU"
+    const val ACQUIRE_WAKE_LOCK = "acquireWakeLock"
 
     const val APP_TRAFFIC_STATISTICS = "appTrafficStatistics"
     const val PROFILE_TRAFFIC_STATISTICS = "profileTrafficStatistics"
@@ -115,7 +121,6 @@ object Key {
     const val SERVER_OBFS_PARAM = "serverObfsParam"
 
     const val SERVER_USER_ID = "serverUserId"
-    const val SERVER_ALTER_ID = "serverAlterId"
     const val SERVER_SECURITY = "serverSecurity"
     const val SERVER_NETWORK = "serverNetwork"
     const val SERVER_HEADER = "serverHeader"
@@ -127,11 +132,13 @@ object Key {
     const val SERVER_ALPN = "serverALPN"
     const val SERVER_CERTIFICATES = "serverCertificates"
     const val SERVER_PINNED_CERTIFICATE_CHAIN = "serverPinnedCertificateChain"
+    const val SERVER_FLOW = "serverFlow"
     const val SERVER_QUIC_SECURITY = "serverQuicSecurity"
     const val SERVER_WS_MAX_EARLY_DATA = "serverWsMaxEarlyData"
     const val SERVER_WS_BROWSER_FORWARDING = "serverWsBrowserForwarding"
     const val SERVER_EARLY_DATA_HEADER_NAME = "serverEarlyDataHeaderName"
     const val SERVER_CONFIG = "serverConfig"
+    const val SERVER_PACKET_ENCODING = "serverPacketEncoding"
 
     const val SERVER_SECURITY_CATEGORY = "serverSecurityCategory"
     const val SERVER_WS_CATEGORY = "serverWsCategory"
@@ -153,6 +160,17 @@ object Key {
     const val SERVER_PRIVATE_KEY = "serverPrivateKey"
     const val SERVER_LOCAL_ADDRESS = "serverLocalAddress"
     const val SERVER_INSECURE_CONCURRENCY = "serverInsecureConcurrency"
+    const val SERVER_MTU = "serverMTU"
+    const val SERVER_REDUCED_IV_HEAD_ENTROPY = "serverReducedIvHeadEntropy"
+    const val SERVER_UDP_OVER_TCP = "serverUoT"
+    const val SERVER_WITHOUT_BROOK_PROTOCOL = "serverWithoutBrookProtocol"
+    const val SERVER_GRPC_MODE = "serverGrpcMode"
+    const val SERVER_ENCRYPTED_PROTOCOL_EXTENSION = "serverEncryptedProtocolExtension"
+
+    const val SERVER_UDP_RELAY_MODE = "serverUDPRelayMode"
+    const val SERVER_CONGESTION_CONTROLLER = "serverCongestionController"
+    const val SERVER_DISABLE_SNI = "serverDisableSNI"
+    const val SERVER_REDUCE_RTT= "serverReduceRTT"
 
     const val BALANCER_TYPE = "balancerType"
     const val BALANCER_GROUP = "balancerGroup"
@@ -172,7 +190,8 @@ object Key {
     const val ROUTE_REVERSE = "routeReverse"
     const val ROUTE_REDIRECT = "routeRedirect"
     const val ROUTE_PACKAGES = "routePackages"
-    const val ROUTE_FOREGROUND_STATUS = "routeForegroundStatus"
+    const val ROUTE_NETWORK_TYPE = "routeNetworkType"
+    const val ROUTE_SSID = "routeSSID"
 
     const val GROUP_NAME = "groupName"
     const val GROUP_TYPE = "groupType"
@@ -184,24 +203,38 @@ object Key {
     const val SUBSCRIPTION_TOKEN = "subscriptionToken"
     const val SUBSCRIPTION_FORCE_RESOLVE = "subscriptionForceResolve"
     const val SUBSCRIPTION_DEDUPLICATION = "subscriptionDeduplication"
-    const val SUBSCRIPTION_FORCE_VMESS_AEAD = "subscriptionForceVMessAEAD"
     const val SUBSCRIPTION_UPDATE = "subscriptionUpdate"
     const val SUBSCRIPTION_UPDATE_WHEN_CONNECTED_ONLY = "subscriptionUpdateWhenConnectedOnly"
     const val SUBSCRIPTION_USER_AGENT = "subscriptionUserAgent"
     const val SUBSCRIPTION_AUTO_UPDATE = "subscriptionAutoUpdate"
     const val SUBSCRIPTION_AUTO_UPDATE_DELAY = "subscriptionAutoUpdateDelay"
 
+    const val TASKER_ACTION = "taskerAction"
+    const val TASKER_PROFILE = "taskerProfile"
+    const val TASKER_PROFILE_ID = "taskerProfileId"
+
 }
 
 object TunImplementation {
     const val GVISOR = 0
-    const val LWIP = 1
+    const val SYSTEM = 1
 }
 
 object TrojanProvider {
     const val V2RAY = 0
     const val TROJAN = 1
     const val TROJAN_GO = 2
+}
+
+object RootCAProvider {
+    const val MOZILLA = 0
+    const val SYSTEM = 1
+}
+
+
+object InstallerProvider {
+    const val SYSTEM = 0
+    const val SHIZUKU = 1
 }
 
 object IPv6Mode {
@@ -240,11 +273,6 @@ object GroupOrder {
     const val BY_DELAY = 2
 }
 
-object AppStatus {
-    const val FOREGROUND = "foreground"
-    const val BACKGROUND = "background"
-}
-
 object BalancerStrategy {
     const val LATEST_PING = "leastPing"
 }
@@ -254,6 +282,14 @@ object Action {
     const val CLOSE = "io.nekohasekai.sagernet.CLOSE"
     const val RELOAD = "io.nekohasekai.sagernet.RELOAD"
     const val ABORT = "io.nekohasekai.sagernet.ABORT"
+    const val SWITCH_WAKE_LOCK = "io.nekohasekai.sagernet.SWITCH_WAKELOCK"
 
     const val EXTRA_PROFILE_ID = "io.nekohasekai.sagernet.EXTRA_PROFILE_ID"
+}
+
+object NetworkType {
+    const val DATA = "data"
+    const val WIFI = "wifi"
+    const val BLUETOOTH = "bluetooth"
+    const val ETHERNET = "ethernet"
 }

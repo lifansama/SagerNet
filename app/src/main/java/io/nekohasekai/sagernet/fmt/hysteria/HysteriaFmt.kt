@@ -21,9 +21,98 @@ package io.nekohasekai.sagernet.fmt.hysteria
 
 import cn.hutool.core.util.NumberUtil
 import cn.hutool.json.JSONObject
+import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.fmt.LOCALHOST
-import io.nekohasekai.sagernet.ktx.wrapUri
+import io.nekohasekai.sagernet.ktx.*
+import libcore.Libcore
 import java.io.File
+
+
+// hysteria://host:port?auth=123456&peer=sni.domain&insecure=1|0&upmbps=100&downmbps=100&alpn=hysteria&obfs=xplus&obfsParam=123456#remarks
+
+fun parseHysteria(url: String): HysteriaBean {
+    val link = Libcore.parseURL(url)
+
+    return HysteriaBean().apply {
+        serverAddress = link.host
+        serverPort = link.port
+        name = link.fragment
+
+        link.queryParameter("peer")?.also {
+            sni = it
+        }
+        link.queryParameter("auth")?.takeIf { it.isNotBlank() }?.also {
+            authPayloadType = HysteriaBean.TYPE_STRING
+            authPayload = it
+        }
+        link.queryParameter("insecure")?.also {
+            allowInsecure = it == "1"
+        }
+        link.queryParameter("upmbps")?.also {
+            uploadMbps = it.toIntOrNull() ?: uploadMbps
+        }
+        link.queryParameter("downmbps")?.also {
+            downloadMbps = it.toIntOrNull() ?: downloadMbps
+        }
+        link.queryParameter("alpn")?.also {
+            alpn = it
+        }
+        link.queryParameter("obfsParam")?.also {
+            obfuscation = it
+        }
+        link.queryParameter("protocol")?.also {
+            when (it) {
+                "faketcp" -> {
+                    protocol = HysteriaBean.PROTOCOL_FAKETCP
+                }
+                "wechat-video" -> {
+                    protocol = HysteriaBean.PROTOCOL_WECHAT_VIDEO
+                }
+            }
+        }
+    }
+}
+
+fun HysteriaBean.toUri(): String {
+    val builder = Libcore.newURL("hysteria")
+    builder.host = serverAddress
+    builder.port = serverPort
+
+    if (sni.isNotBlank()) {
+        builder.addQueryParameter("peer", sni)
+    }
+    if (authPayload.isNotBlank()) {
+        builder.addQueryParameter("auth", authPayload)
+    }
+    if (uploadMbps != 10) {
+        builder.addQueryParameter("upmbps", "$uploadMbps")
+    }
+    if (downloadMbps != 50) {
+        builder.addQueryParameter("downmbps", "$downloadMbps")
+    }
+    if (alpn.isNotBlank()) {
+        builder.addQueryParameter("alpn", alpn)
+    }
+    if (obfuscation.isNotBlank()) {
+        builder.addQueryParameter("obfs", "xplus")
+        builder.addQueryParameter("obfsParam", obfuscation)
+    }
+    when (protocol) {
+        HysteriaBean.PROTOCOL_FAKETCP -> {
+            builder.addQueryParameter("protocol", "faketcp")
+        }
+        HysteriaBean.PROTOCOL_WECHAT_VIDEO -> {
+            builder.addQueryParameter("protocol", "wechat-video")
+        }
+    }
+    if (protocol == HysteriaBean.PROTOCOL_FAKETCP) {
+        builder.addQueryParameter("protocol", "faketcp")
+    }
+    if (name.isNotBlank()) {
+        builder.setRawFragment(name.urlSafe())
+    }
+    return builder.string
+}
 
 fun JSONObject.parseHysteria(): HysteriaBean {
     return HysteriaBean().apply {
@@ -42,7 +131,18 @@ fun JSONObject.parseHysteria(): HysteriaBean {
             authPayloadType = HysteriaBean.TYPE_STRING
             authPayload = it
         }
+        getStr("protocol")?.also {
+            when (it) {
+                "faketcp" -> {
+                    protocol = HysteriaBean.PROTOCOL_FAKETCP
+                }
+                "wechat-video" -> {
+                    protocol = HysteriaBean.PROTOCOL_WECHAT_VIDEO
+                }
+            }
+        }
         sni = getStr("server_name")
+        alpn = getStr("alpn")
         allowInsecure = getBool("insecure")
 
         streamReceiveWindow = getInt("recv_window_conn")
@@ -54,6 +154,14 @@ fun JSONObject.parseHysteria(): HysteriaBean {
 fun HysteriaBean.buildHysteriaConfig(port: Int, cacheFile: (() -> File)?): String {
     return JSONObject().also {
         it["server"] = wrapUri()
+        when (protocol) {
+            HysteriaBean.PROTOCOL_FAKETCP -> {
+                it["protocol"] = "faketcp"
+            }
+            HysteriaBean.PROTOCOL_WECHAT_VIDEO -> {
+                it["protocol"] = "wechat-video"
+            }
+        }
         it["up_mbps"] = uploadMbps
         it["down_mbps"] = downloadMbps
         it["socks5"] = JSONObject(mapOf("listen" to "$LOCALHOST:$port"))
@@ -62,7 +170,13 @@ fun HysteriaBean.buildHysteriaConfig(port: Int, cacheFile: (() -> File)?): Strin
             HysteriaBean.TYPE_BASE64 -> it["auth"] = authPayload
             HysteriaBean.TYPE_STRING -> it["auth_str"] = authPayload
         }
-        if (sni.isNotBlank()) it["server_name"] = sni
+        if (sni.isBlank() && finalAddress == LOCALHOST && !serverAddress.isIpAddress()) {
+            sni = serverAddress
+        }
+        if (sni.isNotBlank()) {
+            it["server_name"] = sni
+        }
+        if (alpn.isNotBlank()) it["alpn"] = alpn
         if (caText.isNotBlank() && cacheFile != null) {
             val caFile = cacheFile()
             caFile.writeText(caText)
@@ -73,5 +187,7 @@ fun HysteriaBean.buildHysteriaConfig(port: Int, cacheFile: (() -> File)?): Strin
         if (streamReceiveWindow > 0) it["recv_window_conn"] = streamReceiveWindow
         if (connectionReceiveWindow > 0) it["recv_window"] = connectionReceiveWindow
         if (disableMtuDiscovery) it["disable_mtu_discovery"] = true
+
+        it["resolver"] = "udp://127.0.0.1:" + DataStore.localDNSPort
     }.toStringPretty()
 }

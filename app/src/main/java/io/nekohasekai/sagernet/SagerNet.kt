@@ -31,8 +31,14 @@ import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.location.LocationManager
 import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiInfo
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.StrictMode
 import android.os.UserManager
 import androidx.annotation.RequiresApi
@@ -40,12 +46,11 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import go.Seq
 import io.nekohasekai.sagernet.bg.SagerConnection
-import io.nekohasekai.sagernet.bg.proto.UidDumper
+import io.nekohasekai.sagernet.bg.test.DebugInstance
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
-import io.nekohasekai.sagernet.ktx.checkMT
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.utils.CrashHandler
@@ -55,16 +60,21 @@ import io.nekohasekai.sagernet.utils.Theme
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
 import kotlinx.coroutines.DEBUG_PROPERTY_VALUE_ON
 import libcore.Libcore
-import org.conscrypt.Conscrypt
-import java.security.Security
+import libcore.UidDumper
+import libcore.UidInfo
+import org.lsposed.hiddenapibypass.HiddenApiBypass
+import java.net.InetSocketAddress
 import androidx.work.Configuration as WorkConfiguration
 
 class SagerNet : Application(),
+    UidDumper,
     WorkConfiguration.Provider {
 
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
-
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            HiddenApiBypass.addHiddenApiExemptions("L")
+        }
         application = this
     }
 
@@ -79,24 +89,32 @@ class SagerNet : Application(),
         updateNotificationChannels()
         Seq.setContext(this)
 
-        externalAssets.mkdirs()
-        Libcore.initializeV2Ray(
-            filesDir.absolutePath + "/", externalAssets.absolutePath + "/", "v2ray/"
-        ) {
-            DataStore.rulesProvider == 0
-        }
-        Libcore.setenv("v2ray.conf.geoloader", "memconservative")
-        Libcore.setUidDumper(UidDumper)
-
         runOnDefaultDispatcher {
             PackageCache.register()
-            checkMT()
         }
+
+        val isMainProcess = ActivityThread.currentProcessName() == BuildConfig.APPLICATION_ID
+
+        if (!isMainProcess) {
+            Libcore.setUidDumper(this, Build.VERSION.SDK_INT < Build.VERSION_CODES.Q)
+            if (BuildConfig.DEBUG) {
+                DebugInstance().launch()
+            }
+        }
+
+        Libcore.setenv("v2ray.conf.geoloader", "memconservative")
+        externalAssets.mkdirs()
+        Libcore.initializeV2Ray(
+            filesDir.absolutePath + "/",
+            externalAssets.absolutePath + "/",
+            "v2ray/",
+            { DataStore.rulesProvider == 0 },
+            { DataStore.providerRootCA == RootCAProvider.SYSTEM },
+            isMainProcess
+        )
 
         Theme.apply(this)
         Theme.applyNightTheme()
-
-        Security.insertProviderAt(Conscrypt.newProvider(), 1)
 
         if (BuildConfig.DEBUG) StrictMode.setVmPolicy(
             StrictMode.VmPolicy.Builder()
@@ -106,6 +124,36 @@ class SagerNet : Application(),
                 .penaltyLog()
                 .build()
         )
+    }
+
+    @RequiresApi(Build.VERSION_CODES.Q)
+    override fun dumpUid(
+        ipProto: Int, srcIp: String, srcPort: Int, destIp: String, destPort: Int
+    ): Int {
+        return SagerNet.connectivity.getConnectionOwnerUid(
+            ipProto, InetSocketAddress(srcIp, srcPort), InetSocketAddress(destIp, destPort)
+        )
+    }
+
+    override fun getUidInfo(uid: Int): UidInfo {
+        PackageCache.awaitLoadSync()
+
+        if (uid <= 1000L) {
+            val uidInfo = UidInfo()
+            uidInfo.label = PackageCache.loadLabel("android")
+            uidInfo.packageName = "android"
+            return uidInfo
+        }
+
+        val packageNames = PackageCache.uidMap[uid.toInt()]
+        if (!packageNames.isNullOrEmpty()) for (packageName in packageNames) {
+            val uidInfo = UidInfo()
+            uidInfo.label = PackageCache.loadLabel(packageName)
+            uidInfo.packageName = packageName
+            return uidInfo
+        }
+
+        error("unknown uid $uid")
     }
 
     fun getPackageInfo(packageName: String) = packageManager.getPackageInfo(
@@ -158,6 +206,10 @@ class SagerNet : Application(),
         val notification by lazy { application.getSystemService<NotificationManager>()!! }
         val user by lazy { application.getSystemService<UserManager>()!! }
         val uiMode by lazy { application.getSystemService<UiModeManager>()!! }
+        val wifi by lazy { application.getSystemService<WifiManager>()!! }
+        val location by lazy { application.getSystemService<LocationManager>()!! }
+        val power by lazy { application.getSystemService<PowerManager>()!! }
+
         val packageInfo: PackageInfo by lazy { application.getPackageInfo(application.packageName) }
         val directBootSupported by lazy {
             Build.VERSION.SDK_INT >= 24 && try {
@@ -204,6 +256,34 @@ class SagerNet : Application(),
                     )
                 )
             }
+        }
+
+        fun reloadNetwork(network: Network?) {
+            val capabilities = connectivity.getNetworkCapabilities(network) ?: return
+            val networkType = when {
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI_AWARE) -> "wifi"
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "bluetooth"
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                else -> "data"
+            }
+            Libcore.setNetworkType(networkType)
+            var ssid: String? = null
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                when (val transportInfo = capabilities.transportInfo) {
+                    is WifiInfo -> {
+                        ssid = transportInfo.ssid
+                    }
+                }
+                if (WifiManager.UNKNOWN_SSID == ssid) {
+                    // try again from old api
+                    ssid = wifi.connectionInfo?.ssid
+                }
+            } else {
+                val wifiInfo = wifi.connectionInfo
+                ssid = wifiInfo?.ssid
+            }
+            Libcore.setWifiSSID(ssid?.trim { it == '"' } ?: "")
         }
 
         fun startService() = ContextCompat.startForegroundService(

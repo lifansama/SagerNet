@@ -1,8 +1,8 @@
 import cn.hutool.core.codec.Base64
 import cn.hutool.core.util.RuntimeUtil
 import cn.hutool.crypto.digest.DigestUtil
+import com.android.build.api.dsl.*
 import com.android.build.gradle.AbstractAppExtension
-import com.android.build.gradle.BaseExtension
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
 import com.github.triplet.gradle.play.PlayPublisherExtension
 import org.apache.tools.ant.filters.StringInputStream
@@ -16,7 +16,11 @@ import java.io.File
 import java.util.*
 import kotlin.system.exitProcess
 
-private val Project.android get() = extensions.getByName<BaseExtension>("android")
+private val Project.android
+    get() = extensions.getByName<CommonExtension<BuildFeatures, BuildType, DefaultConfig, ProductFlavor>>(
+        "android"
+    )
+private val Project.androidApp get() = android as ApplicationExtension
 
 private val javaVersion = JavaVersion.VERSION_1_8
 private lateinit var metadata: Properties
@@ -89,11 +93,10 @@ fun Project.requireTargetAbi(): String {
 
 fun Project.setupCommon() {
     android.apply {
-        buildToolsVersion("30.0.3")
-        compileSdkVersion(31)
+        buildToolsVersion = "30.0.3"
+        compileSdk = 31
         defaultConfig {
             minSdk = 21
-            targetSdk = 31
         }
         buildTypes {
             getByName("release") {
@@ -104,29 +107,31 @@ fun Project.setupCommon() {
             sourceCompatibility = javaVersion
             targetCompatibility = javaVersion
         }
-        lintOptions {
-            isShowAll = true
-            isCheckAllWarnings = true
-            isCheckReleaseBuilds = false
-            isWarningsAsErrors = true
+        lint {
+            showAll = true
+            checkAllWarnings = true
+            checkReleaseBuilds = false
+            warningsAsErrors = true
             textOutput = project.file("build/lint.txt")
             htmlOutput = project.file("build/lint.html")
         }
         packagingOptions {
-            excludes.addAll(
-                listOf(
-                    "**/*.kotlin_*",
-                    "/META-INF/*.version",
-                    "/META-INF/native/**",
-                    "/META-INF/native-image/**",
-                    "/META-INF/INDEX.LIST",
-                    "DebugProbesKt.bin",
-                    "com/**",
-                    "org/**",
-                    "**/*.java",
-                    "**/*.proto"
+            resources {
+                excludes.addAll(
+                    listOf(
+                        "**/*.kotlin_*",
+                        "/META-INF/*.version",
+                        "/META-INF/native/**",
+                        "/META-INF/native-image/**",
+                        "/META-INF/INDEX.LIST",
+                        "DebugProbesKt.bin",
+                        "com/**",
+                        "org/**",
+                        "**/*.java",
+                        "**/*.proto",
+                    )
                 )
-            )
+            }
         }
         packagingOptions {
             jniLibs.useLegacyPackaging = true
@@ -147,6 +152,11 @@ fun Project.setupCommon() {
             }
         }
     }
+    (android as? ApplicationExtension)?.apply {
+        defaultConfig {
+            targetSdk = 32
+        }
+    }
 }
 
 fun Project.setupKotlinCommon() {
@@ -160,7 +170,7 @@ fun Project.setupKotlinCommon() {
 }
 
 fun Project.setupNdk() {
-    android.ndkVersion = "23.1.7779620"
+    android.ndkVersion = "25.0.8775105"
 }
 
 fun Project.setupNdkLibrary() {
@@ -216,11 +226,12 @@ fun Project.setupPlay() {
 private fun Project.setupPlayInternal(): PlayPublisherExtension {
     apply(plugin = "com.github.triplet.play")
     return (extensions.getByName("play") as PlayPublisherExtension).apply {
-        if (android.defaultConfig.versionName?.contains("beta") == true) {
+        if (androidApp.defaultConfig.versionName?.contains("beta") == true) {
             track.set("beta")
         } else {
             track.set("production")
         }
+        track.set("production")
         defaultToAppBundles.set(true)
     }
 }
@@ -233,14 +244,14 @@ fun Project.setupAppCommon() {
     val alias = lp.getProperty("ALIAS_NAME") ?: System.getenv("ALIAS_NAME")
     val pwd = lp.getProperty("ALIAS_PASS") ?: System.getenv("ALIAS_PASS")
 
-    android.apply {
+    androidApp.apply {
         if (keystorePwd != null) {
             signingConfigs {
                 create("release") {
-                    storeFile(rootProject.file("release.keystore"))
-                    storePassword(keystorePwd)
-                    keyAlias(alias)
-                    keyPassword(pwd)
+                    storeFile = rootProject.file("release.keystore")
+                    storePassword = keystorePwd
+                    keyAlias = alias
+                    keyPassword = pwd
                 }
             }
         } else if (requireFlavor().contains("(Oss|Expert|Play)Release".toRegex())) {
@@ -307,9 +318,9 @@ fun Project.setupAppCommon() {
 fun Project.setupPlugin(projectName: String) {
     val propPrefix = projectName.toUpperCase(Locale.ROOT)
     val projName = projectName.toLowerCase(Locale.ROOT)
-    val verName = requireMetadata().getProperty("${propPrefix}_VERSION_NAME")
-    val verCode = requireMetadata().getProperty("${propPrefix}_VERSION").toInt() * 5
-    android.defaultConfig {
+    val verName = requireMetadata().getProperty("${propPrefix}_VERSION_NAME").trim()
+    val verCode = requireMetadata().getProperty("${propPrefix}_VERSION").trim().toInt() * 5
+    androidApp.defaultConfig {
         applicationId = "io.nekohasekai.sagernet.plugin.$projName"
 
         versionName = verName
@@ -322,7 +333,7 @@ fun Project.setupPlugin(projectName: String) {
 
     val targetAbi = requireTargetAbi()
 
-    android.apply {
+    androidApp.apply {
         this as AbstractAppExtension
 
         buildTypes {
@@ -335,33 +346,23 @@ fun Project.setupPlugin(projectName: String) {
         }
 
         splits.abi {
-            isEnable = true
-            isUniversalApk = false
+            if (requireFlavor().startsWith("Fdroid")) {
+                isEnable = false
+            } else {
+                isEnable = true
+                isUniversalApk = false
 
-            if (targetAbi.isNotBlank()) {
-                reset()
-                include(targetAbi)
+                if (targetAbi.isNotBlank()) {
+                    reset()
+                    include(targetAbi)
+                }
             }
         }
 
-        flavorDimensions("vendor")
+        flavorDimensions.add("vendor")
         productFlavors {
             create("oss")
-            create("fdroidArm64") {
-                versionNameSuffix = "-arm64"
-            }
-            create("fdroidArm") {
-                versionCode = verCode - 1
-                versionNameSuffix = "-arm"
-            }
-            create("fdroidX64") {
-                versionCode = verCode - 2
-                versionNameSuffix = "-x64"
-            }
-            create("fdroidX86") {
-                versionCode = verCode - 3
-                versionNameSuffix = "-x86"
-            }
+            create("fdroid")
             create("play") {
                 versionCode = verCode - 4
             }
@@ -425,10 +426,10 @@ fun Project.setupPlugin(projectName: String) {
 }
 
 fun Project.setupApp() {
-    val pkgName = requireMetadata().getProperty("PACKAGE_NAME")
-    val verName = requireMetadata().getProperty("VERSION_NAME")
-    val verCode = (requireMetadata().getProperty("VERSION_CODE").toInt()) * 5
-    android.apply {
+    val pkgName = requireMetadata().getProperty("PACKAGE_NAME").trim()
+    val verName = requireMetadata().getProperty("VERSION_NAME").trim()
+    val verCode = 153 * 5 + (requireMetadata().getProperty("VERSION_CODE").trim().toInt() - 153) * 2
+    androidApp.apply {
         defaultConfig {
             applicationId = pkgName
             versionCode = verCode
@@ -440,7 +441,7 @@ fun Project.setupApp() {
 
     val targetAbi = requireTargetAbi()
 
-    android.apply {
+    androidApp.apply {
         this as AbstractAppExtension
 
         buildTypes {
@@ -453,36 +454,26 @@ fun Project.setupApp() {
         }
 
         splits.abi {
-            isEnable = true
-            isUniversalApk = false
+            if (requireFlavor().startsWith("Fdroid")) {
+                isEnable = false
+            } else {
+                isEnable = true
+                isUniversalApk = false
 
-            if (targetAbi.isNotBlank()) {
-                reset()
-                include(targetAbi)
+                if (targetAbi.isNotBlank()) {
+                    reset()
+                    include(targetAbi)
+                }
             }
         }
 
-        flavorDimensions("vendor")
+        flavorDimensions.add("vendor")
         productFlavors {
             create("oss")
             create("expert")
-            create("fdroidArm64") {
-                versionNameSuffix = "-arm64"
-            }
-            create("fdroidArm") {
-                versionCode = verCode - 1
-                versionNameSuffix = "-arm"
-            }
-            create("fdroidX64") {
-                versionCode = verCode - 2
-                versionNameSuffix = "-x64"
-            }
-            create("fdroidX86") {
-                versionCode = verCode - 3
-                versionNameSuffix = "-x86"
-            }
+            create("fdroid")
             create("play") {
-                versionCode = verCode - 4
+                versionCode = verCode - 1
             }
         }
 
@@ -501,6 +492,7 @@ fun Project.setupApp() {
                 requireFlavor().endsWith("Debug")
             }
             doLast {
+                downloadRootCAList()
                 downloadAssets()
             }
         }
@@ -512,6 +504,8 @@ fun Project.setupApp() {
     }
 
     dependencies {
+
+        add("implementation", kotlin("stdlib", "${rootProject.extra["kotlinVersion"]}"))
         add("implementation", project(":plugin:api"))
         add("testImplementation", "junit:junit:4.13.2")
         add("androidTestImplementation", "androidx.test.ext:junit:1.1.3")

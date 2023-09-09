@@ -165,6 +165,9 @@
         <item>AES-256-GCM</item>
         <item>CHACHA20-IETF-POLY1305</item>
         <item>XCHACHA20-IETF-POLY1305</item>
+        <item>2022-BLAKE3-AES-128-GCM</item>
+        <item>2022-BLAKE3-AES-256-GCM</item>
+        <item>2022-BLAKE3-CHACHA20-IETF-POLY1305</item>
         <item>RC4</item>
         <item>RC4-MD5</item>
         <item>AES-128-CTR</item>
@@ -204,6 +207,9 @@
         <item>aes-256-gcm</item>
         <item>chacha20-ietf-poly1305</item>
         <item>xchacha20-ietf-poly1305</item>
+        <item>2022-blake3-aes-128-gcm</item>
+        <item>2022-blake3-aes-256-gcm</item>
+        <item>2022-blake3-chacha20-poly1305</item>
         <item>rc4</item>
         <item>rc4-md5</item>
         <item>aes-128-ctr</item>
@@ -423,19 +429,41 @@
     <string-array name="transport_layer_encryption_entry">
         <item>NONE</item>
         <item>TLS</item>
+        <item>XTLS</item>
     </string-array>
 
     <string-array name="transport_layer_encryption_value">
         <item>none</item>
         <item>tls</item>
+        <item>xtls</item>
     </string-array>
 
-    <string-array name="trojan_transport_layer_encryption_entry">
+    <string-array name="trojan_transport_layer_encryption_entry" translatable="false">
         <item>TLS</item>
+        <item>XTLS</item>
     </string-array>
 
     <string-array name="trojan_transport_layer_encryption_value">
         <item>tls</item>
+        <item>xtls</item>
+    </string-array>
+
+    <string-array name="xtls_flow_entry" translatable="false">
+        <item>XTLS-RPRX-ORIGIN</item>
+        <item>XTLS-RPRX-ORIGIN-UDP443</item>
+        <item>XTLS-RPRX-DIRECT</item>
+        <item>XTLS-RPRX-DIRECT-UDP443</item>
+        <item>XTLS-RPRX-SPLICE</item>
+        <item>XTLS-RPRX-SPLICE-UDP443</item>
+    </string-array>
+
+    <string-array name="xtls_flow_value" translatable="false">
+        <item>xtls-rprx-origin</item>
+        <item>xtls-rprx-origin-udp443</item>
+        <item>xtls-rprx-direct</item>
+        <item>xtls-rprx-direct-udp443</item>
+        <item>xtls-rprx-splice</item>
+        <item>xtls-rprx-splice-udp443</item>
     </string-array>
 
     <string-array name="notification_entry">
@@ -555,12 +583,6 @@
         <item>2</item>
     </string-array>
 
-    <string-array name="trojan_provider_experimental">
-        <item>V2Ray</item>
-        <item>Trojan</item>
-        <item>Trojan-Go</item>
-    </string-array>
-
     <string-array name="group_types">
         <item>@string/group_basic</item>
         <item>@string/subscription</item>
@@ -595,18 +617,6 @@
         <item>@string/group_order_by_delay</item>
     </string-array>
 
-    <string-array name="foreground_status">
-        <item tools:ignore="PrivateResource">@string/not_set</item>
-        <item>@string/foreground</item>
-        <item>@string/background</item>
-    </string-array>
-
-    <string-array name="foreground_status_value">
-        <item />
-        <item>foreground</item>
-        <item>background</item>
-    </string-array>
-
     <string-array name="ssh_auth_type">
         <item>@string/ssh_auth_type_none</item>
         <item>@string/password</item>
@@ -615,7 +625,95 @@
 
     <string-array name="tun_implementation">
         <item>gVisor</item>
-        <item>LwIP</item>
+        <item>System</item>
+    </string-array>
+
+    <string-array name="hysteria_protocol">
+        <item>UDP</item>
+        <item>FakeTCP (Root Required)</item>
+        <item>WeChat Video</item>
+    </string-array>
+
+    <string-array name="network_type_entry">
+        <item>@string/not_set</item>
+        <item>@string/network_data</item>
+        <item>@string/network_wifi</item>
+        <item>@string/network_bt</item>
+        <item>@string/network_eth</item>
+    </string-array>
+
+    <string-array name="network_type_value">
+        <item />
+        <item>data</item>
+        <item>wifi</item>
+        <item>bluetooth</item>
+        <item>ethernet</item>
+    </string-array>
+
+    <string-array name="tasker_action_entry">
+        <item>@string/tasker_action_start_service</item>
+        <item>@string/tasker_action_stop_service</item>
+    </string-array>
+
+    <string-array name="tasker_outbound_entry">
+        <item>@string/tasker_start_current_profile</item>
+        <item>@string/route_profile</item>
+    </string-array>
+
+    <string-array name="root_ca_provider_entry">
+        <item>@string/root_ca_mozilla</item>
+        <item>@string/root_ca_system</item>
+    </string-array>
+
+    <string-array name="packet_encoding_entry">
+        <item>None</item>
+        <item>Packet</item>
+        <item>XUDP</item>
+    </string-array>
+
+    <string-array name="installer_provider_entry">
+        <item>@string/root_ca_system</item>
+        <item>Shizuku</item>
+    </string-array>
+
+    <string-array name="grpc_mode_entry">
+        <item>Gun</item>
+        <item>Multi</item>
+        <item>Raw</item>
+    </string-array>
+
+    <string-array name="grpc_mode_value">
+        <item />
+        <item>multi</item>
+        <item>raw</item>
+    </string-array>
+
+    <string-array name="mieru_protocol">
+        <item>TCP</item>
+        <item>UDP</item>
+    </string-array>
+
+    <string-array name="tuic_udp_relay_mode_entry">
+        <item>NATIVE</item>
+        <item>QUIC</item>
+    </string-array>
+    
+    <string-array name="tuic_udp_relay_mode_value">
+        <item>native</item>
+        <item>quic</item>
+    </string-array>
+
+    <string-array name="tuic_congestion_controller_entry">
+        <item>CUBIC</item>
+        <item>NEW RENO</item>
+        <item>BBR</item>
+    </string-array>
+
+
+    <string-array name="tuic_congestion_controller_value">
+        <item>cubic</item>
+        <item>new_reno</item>
+        <item>bbr</item>
     </string-array>
 
 </resources>

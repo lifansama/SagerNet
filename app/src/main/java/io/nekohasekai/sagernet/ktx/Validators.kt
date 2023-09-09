@@ -27,10 +27,12 @@ import com.github.shadowsocks.plugin.PluginConfiguration
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.http.HttpBean
+import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.internal.ConfigBean
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
 import io.nekohasekai.sagernet.fmt.shadowsocksr.ShadowsocksRBean
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
+import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.v2ray.VLESSBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.group.RawUpdater
@@ -71,8 +73,6 @@ fun AbstractBean.isInsecure(): ValidateResult {
         if (type == "kcp" && mKcpSeed.isBlank()) {
             return ResultInsecure(R.raw.mkcp_no_seed)
         }
-        if (allowInsecure) return ResultInsecure(R.raw.insecure)
-        if (alterId > 0) return ResultDeprecated(R.raw.vmess_md5_auth)
     } else if (this is VLESSBean) {
         if (security in arrayOf("", "none")) {
             return ResultInsecure(R.raw.not_encrypted)
@@ -80,7 +80,13 @@ fun AbstractBean.isInsecure(): ValidateResult {
         if (type == "kcp" && mKcpSeed.isBlank()) {
             return ResultInsecure(R.raw.mkcp_no_seed)
         }
-        if (allowInsecure) return ResultInsecure(R.raw.insecure)
+        if (security == "xtls") {
+            return ResultDeprecated(R.raw.xtls)
+        }
+    } else if (this is TrojanBean) {
+        if (security == "xtls") {
+            return ResultDeprecated(R.raw.xtls)
+        }
     } else if (this is ConfigBean) {
         try {
             val profiles = RawUpdater.parseJSON(JSONObject(content))
@@ -91,6 +97,9 @@ fun AbstractBean.isInsecure(): ValidateResult {
             }
         } catch (ignored: Exception) {
         }
+    }
+    if (allowInsecure()) {
+        return ResultInsecure(R.raw.insecure)
     }
     return ResultSecure
 }

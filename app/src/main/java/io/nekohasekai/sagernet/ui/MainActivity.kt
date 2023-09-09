@@ -47,6 +47,7 @@ import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutMainBinding
 import io.nekohasekai.sagernet.fmt.AbstractBean
+import io.nekohasekai.sagernet.fmt.Alerts
 import io.nekohasekai.sagernet.fmt.KryoConverters
 import io.nekohasekai.sagernet.fmt.PluginEntry
 import io.nekohasekai.sagernet.group.GroupInterfaceAdapter
@@ -54,6 +55,7 @@ import io.nekohasekai.sagernet.group.GroupUpdater
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.plugin.PluginManager
 import io.nekohasekai.sagernet.widget.ListHolderListener
+import io.noties.markwon.Markwon
 import com.github.shadowsocks.plugin.PluginManager as ShadowsocksPluginPluginManager
 
 class MainActivity : ThemedActivity(),
@@ -63,6 +65,8 @@ class MainActivity : ThemedActivity(),
 
     lateinit var binding: LayoutMainBinding
     lateinit var navigation: NavigationView
+
+    val userInterface by lazy { GroupInterfaceAdapter(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,7 +101,6 @@ class MainActivity : ThemedActivity(),
         changeState(BaseService.State.Idle)
         connection.connect(this, this)
         DataStore.configurationStore.registerChangeListener(this)
-        GroupManager.userInterface = GroupInterfaceAdapter(this)
 
         if (intent?.action == Intent.ACTION_VIEW) {
             onNewIntent(intent)
@@ -398,38 +401,56 @@ class MainActivity : ThemedActivity(),
     }
 
     override fun routeAlert(type: Int, routeName: String) {
+        val markwon = Markwon.create(this)
         when (type) {
-            0 -> {
-                // need vpn
-
-                Toast.makeText(
-                    this, getString(R.string.route_need_vpn, routeName), Toast.LENGTH_SHORT
-                ).show()
+            Alerts.ROUTE_ALERT_NOT_VPN -> {
+                val message = markwon.toMarkdown(getString(R.string.route_need_vpn, routeName))
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
             }
-            1 -> {
-                // need fds
-
-                MaterialAlertDialogBuilder(this).setTitle(R.string.foreground_detector)
-                    .setMessage(getString(R.string.route_need_fds, routeName))
-                    .setPositiveButton(R.string.enable) { _, _ ->
-                        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            Alerts.ROUTE_ALERT_NEED_BACKGROUND_LOCATION_ACCESS -> {
+                val message = markwon.toMarkdown(getString(R.string.route_need_ssid, routeName))
+                MaterialAlertDialogBuilder(this).setTitle(R.string.missing_permission)
+                    .setMessage(message)
+                    .setNeutralButton(R.string.open_settings) { _, _ ->
+                        try {
+                            startActivity(Intent().apply {
+                                action = Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+                                data = Uri.fromParts(
+                                    "package", packageName, null
+                                )
+                            })
+                        } catch (e: Exception) {
+                            snackbar(e.readableMessage).show()
+                        }
                     }
-                    .setNegativeButton(android.R.string.cancel, null)
+                    .setPositiveButton(android.R.string.ok, null)
+                    .show()
+            }
+            Alerts.ROUTE_ALERT_LOCATION_DISABLED -> {
+                val message = markwon.toMarkdown(getString(R.string.route_need_ssid, routeName))
+                MaterialAlertDialogBuilder(this).setTitle(R.string.location_disabled)
+                    .setMessage(message)
+                    .setNeutralButton(R.string.open_settings) { _, _ ->
+                        try {
+                            startActivity(Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        } catch (e: Exception) {
+                            snackbar(e.readableMessage).show()
+                        }
+                    }
+                    .setPositiveButton(android.R.string.ok, null)
                     .show()
             }
         }
     }
 
     val connection = SagerConnection(true)
-    override fun onServiceConnected(service: ISagerNetService) = changeState(
-        try {
-            BaseService.State.values()[service.state].also {
-                SagerNet.started = it.canStop
-            }
-        } catch (_: RemoteException) {
-            BaseService.State.Idle
+    override fun onServiceConnected(service: ISagerNetService) = changeState(try {
+        BaseService.State.values()[service.state].also {
+            SagerNet.started = it.canStop
         }
-    )
+    } catch (_: RemoteException) {
+        BaseService.State.Idle
+    })
 
     override fun onServiceDisconnected() = changeState(BaseService.State.Idle)
     override fun onBinderDied() {
@@ -481,16 +502,17 @@ class MainActivity : ThemedActivity(),
     override fun onStart() {
         super.onStart()
         connection.bandwidthTimeout = 1000
+        GroupManager.userInterface = userInterface
     }
 
     override fun onStop() {
         connection.bandwidthTimeout = 0
+        GroupManager.userInterface = null
         super.onStop()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        GroupManager.userInterface = null
         DataStore.configurationStore.unregisterChangeListener(this)
         connection.disconnect(this)
     }

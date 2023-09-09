@@ -61,7 +61,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
-import okhttp3.internal.closeQuietly
 import org.jf.dexlib2.dexbacked.DexBackedDexFile
 import org.jf.dexlib2.iface.DexFile
 import java.io.File
@@ -335,6 +334,18 @@ class AppManagerActivity : ThemedActivity() {
         return super.onOptionsItemSelected(item)
     }
 
+    private val skipList = listOf(
+        "android",
+        "com.android.providers.downloads.ui",
+        "com.android.browser",
+        "org.zwanoo.android.speedtest"
+    )
+
+    private val bypassList = listOf(
+        "com.android.captiveportallogin",
+        "com.google.android.captiveportallogin"
+    )
+
     @SuppressLint("SetTextI18n")
     private fun scanChinaApps() {
 
@@ -435,7 +446,9 @@ class AppManagerActivity : ThemedActivity() {
                                         app to app.applicationInfo.loadLabel(packageManager)
                                             .toString()
                                     )
-                                    zipFile.closeQuietly()
+                                    runCatching {
+                                        zipFile.close()
+                                    }
 
                                     if (bypass) {
                                         changed = !proxiedUids[app.applicationInfo.uid]
@@ -449,7 +462,9 @@ class AppManagerActivity : ThemedActivity() {
                             }
                         }
                     }
-                    zipFile.closeQuietly()
+                    runCatching {
+                        zipFile.close()
+                    }
 
                     if (bypass) {
                         proxiedUids.delete(app.applicationInfo.uid)
@@ -463,6 +478,22 @@ class AppManagerActivity : ThemedActivity() {
                     continue
                 }
 
+            }
+
+            skipList.mapNotNull { PackageCache.packageMap[it] }.forEach {
+                if (bypass) {
+                    proxiedUids.delete(it)
+                } else {
+                    proxiedUids[it] = true
+                }
+            }
+
+            bypassList.mapNotNull { PackageCache.packageMap[it] }.forEach {
+                if (bypass) {
+                    proxiedUids[it] = true
+                } else {
+                    proxiedUids.delete(it)
+                }
             }
 
             DataStore.individual = apps.filter { isProxiedApp(it) }

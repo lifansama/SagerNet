@@ -3,7 +3,6 @@
     <string name="logcat">Экспартаваць інфармацыю пра адладку</string>
     <string name="version_x">Версія (%s)</string>
     <string name="app_version">Версія</string>
-    <string name="oss_licenses">Ліцэнзіі з адкрытым зыходным кодам</string>
     <string name="telegram">Канал абнаўлення тэлеграм</string>
     <string name="github">Зыходны код</string>
     <string name="project">Праект</string>
@@ -13,7 +12,6 @@
     <string name="header_type">Тып загалоўка</string>
     <string name="network">Сетка</string>
     <string name="security">Шыфраванне транспартнага ўзроўню</string>
-    <string name="alter_id">Змяніць ID</string>
     <string name="uuid">Ідентифікатор карыстальніка</string>
     <string name="obfs_param">Obfs Парам</string>
     <string name="obfs">Obfs</string>
@@ -34,8 +32,6 @@
     <string name="inbound_settings">Уключыць Transproxy Уваходныя</string>
     <string name="port_local_dns">Лакальны порт DNS</string>
     <string name="dns_hosts">Перапісаць дамен</string>
-    <string name="fakedns_message">Можа выклікаць перазапуск іншых прыкладанняў для паўторнага падлучэння да сеткі пасля спынення проксі</string>
-    <string name="enable_fakedns">Уключыць FakeDNS</string>
     <string name="dns_routing_message">Выкарыстоўвайце прамы DNS для маршрутаў па -за проксі. У гэтым выпадку верагодна ўцечка DNS</string>
     <string name="enable_dns_routing">Уключыць маршрутызацыю DNS</string>
     <string name="direct_dns">Прамы DNS</string>

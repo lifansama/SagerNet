@@ -58,12 +58,12 @@ public abstract class AbstractBean extends Serializable implements Cloneable<Abs
         if (StrUtil.isNotBlank(name)) {
             return name;
         } else {
-            return serverAddress + ":" + serverPort;
+            return displayAddress();
         }
     }
 
     public String displayAddress() {
-        return serverAddress + ":" + serverPort;
+        return NetsKt.wrapOriginUri(this);
     }
 
     public String network() {
@@ -188,6 +188,10 @@ public abstract class AbstractBean extends Serializable implements Cloneable<Abs
     }
 
     public void applyFeatureSettings(AbstractBean other) {
+    }
+
+    public boolean allowInsecure() {
+        return false;
     }
 
 }

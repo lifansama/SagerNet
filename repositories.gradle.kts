@@ -1,6 +1,7 @@
 rootProject.extra.apply {
-    set("androidPluginVersion", "7.0.3")
-    set("kotlinVersion", "1.5.31")
+    set("androidPluginVersion", "7.1.3")
+    set("kotlinVersion", "1.6.21")
+    set("hutoolVersion", "5.7.22")
 }
 
 repositories {

@@ -27,8 +27,17 @@ import com.github.shadowsocks.plugin.PluginOptions
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.fmt.LOCALHOST
-import io.nekohasekai.sagernet.ktx.*
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import io.nekohasekai.sagernet.ktx.decodeBase64UrlSafe
+import io.nekohasekai.sagernet.ktx.queryParameter
+import io.nekohasekai.sagernet.ktx.unUrlSafe
+import io.nekohasekai.sagernet.ktx.urlSafe
+import libcore.Libcore
+
+val methodsSing = arrayOf(
+    "2022-blake3-aes-128-gcm",
+    "2022-blake3-aes-256-gcm",
+    "2022-blake3-chacha20-poly1305"
+)
 
 fun PluginConfiguration.fixInvalidParams() {
 
@@ -52,20 +61,6 @@ fun PluginConfiguration.fixInvalidParams() {
 
     }
 
-    if (selected == "obfs-local") {
-        val options = pluginsOptions["obfs-local"]
-        if (options != null) {
-            if (options.containsKey("mode")) {
-                options["obfs"] = options["mode"]
-                options.remove("mode")
-            }
-            if (options.containsKey("host")) {
-                options["obfs-host"] = options["host"]
-                options.remove("host")
-            }
-        }
-    }
-
 }
 
 fun ShadowsocksBean.fixInvalidParams() {
@@ -78,17 +73,13 @@ fun parseShadowsocks(url: String): ShadowsocksBean {
 
     if (url.contains("@")) {
 
-        var link = url.replace("ss://", "https://").toHttpUrlOrNull() ?: error(
-            "invalid ss-android link $url"
-        )
+        var link = Libcore.parseURL(url)
 
         if (link.username.isBlank()) { // fix justmysocks's shit link
-
-            link = (("https://" + url.substringAfter("ss://")
-                .substringBefore("#")
-                .decodeBase64UrlSafe()).toHttpUrlOrNull() ?: error(
-                "invalid jms link $url"
-            )).newBuilder().fragment(url.substringAfter("#")).build()
+            link = Libcore.parseURL(
+                ("ss://" + url.substringAfter("ss://").substringBefore("#").decodeBase64UrlSafe())
+            )
+            link.setRawFragment(url.substringAfter("#"))
         }
 
         // ss-android style
@@ -102,8 +93,9 @@ fun parseShadowsocks(url: String): ShadowsocksBean {
                 method = link.username
                 password = link.password
                 plugin = link.queryParameter("plugin") ?: ""
-                name = link.fragment ?: ""
-
+                name = link.fragment
+                uot = link.queryParameter("udp-over-tcp") == "true" || name.contains("SUoT")
+                encryptedProtocolExtension = link.queryParameter("encrypted-protocol-extension") == "true"
                 fixInvalidParams()
 
             }
@@ -119,7 +111,9 @@ fun parseShadowsocks(url: String): ShadowsocksBean {
             method = methodAndPswd.substringBefore(":")
             password = methodAndPswd.substringAfter(":")
             plugin = link.queryParameter("plugin") ?: ""
-            name = link.fragment ?: ""
+            name = link.fragment
+            uot = link.queryParameter("udp-over-tcp") == "true" || name.contains("SUoT")
+            encryptedProtocolExtension = link.queryParameter("encrypted-protocol-extension") == "true"
 
             fixInvalidParams()
 
@@ -133,8 +127,9 @@ fun parseShadowsocks(url: String): ShadowsocksBean {
 
         if (v2Url.contains("#")) v2Url = v2Url.substringBefore("#")
 
-        val link = ("https://" + v2Url.substringAfter("ss://")
-            .decodeBase64UrlSafe()).toHttpUrlOrNull() ?: error("invalid v2rayN link $url")
+        val link = Libcore.parseURL(
+            ("ss://" + v2Url.substringAfter("ss://").decodeBase64UrlSafe())
+        )
 
         return ShadowsocksBean().apply {
 
@@ -157,19 +152,33 @@ fun parseShadowsocks(url: String): ShadowsocksBean {
 
 fun ShadowsocksBean.toUri(): String {
 
-    val builder = linkBuilder().username(Base64.encodeUrlSafe("$method:$password"))
-        .host(serverAddress)
-        .port(serverPort)
+    val builder = Libcore.newURL("ss")
+    builder.host = serverAddress
+    builder.port = serverPort
+    if (method.startsWith("2022")) {
+        builder.username = method
+        builder.password = password
+    } else {
+        builder.username = Base64.encodeUrlSafe("$method:$password")
+    }
 
     if (plugin.isNotBlank()) {
         builder.addQueryParameter("plugin", plugin)
     }
 
     if (name.isNotBlank()) {
-        builder.encodedFragment(name.urlSafe())
+        builder.setRawFragment(name.urlSafe())
     }
 
-    return builder.toLink("ss").replace("$serverPort/", "$serverPort")
+    if (uot) {
+        builder.addQueryParameter("udp-over-tcp", "true")
+    }
+
+    if (encryptedProtocolExtension) {
+        builder.addQueryParameter("encrypted-protocol-extension", "true")
+    }
+
+    return builder.string
 
 }
 
